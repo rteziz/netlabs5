@@ -1,0 +1,29 @@
+# Бинарники
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+mcdisc
+*.png
+
+# Тестовые файлы
+*.test
+
+# Профилировка
+*.prof
+
+# Кеш и модули (опционально)
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# ОС
+.DS_Store
+Thumbs.db
+
+# Переменные окружения
+.env
