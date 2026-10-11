@@ -36,7 +36,10 @@ func receiveLoop(conn *net.UDPConn, selfID string, tracker *PeerTracker) {
 			return
 		}
 
-		receivedID := string(buf[:n])
+		receivedID, ok := parseHeartbeat(buf[:n])
+		if !ok {
+			continue
+		}
 
 		if receivedID == selfID {
 			continue

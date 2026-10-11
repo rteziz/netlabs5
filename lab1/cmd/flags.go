@@ -60,6 +60,18 @@ func parseFlags() (*Config, error) {
 
 	isIPv6 := ip.To4() == nil
 
+	if *port < 1 || *port > 65535 {
+		return nil, fmt.Errorf("-port должен быть в диапазоне 1-65535, получено: %d", *port)
+	}
+
+	if *interval <= 0 {
+		return nil, fmt.Errorf("-interval должен быть положительным, получено: %s", *interval)
+	}
+
+	if *timeout <= 0 {
+		return nil, fmt.Errorf("-timeout должен быть положительным, получено: %s", *timeout)
+	}
+
 	if *timeout <= *interval {
 		return nil, fmt.Errorf("-timeout (%s) должен быть больше, чем -interval (%s), иначе живые копии будут ошибочно считаться исчезнувшими", *timeout, *interval)
 	}

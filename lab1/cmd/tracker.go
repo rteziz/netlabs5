@@ -1,10 +1,13 @@
 package main
 
 import (
+	"log"
 	"sort"
 	"sync"
 	"time"
 )
+
+const maxPeers = 1000
 
 type peerInfo struct {
 	addr     string
@@ -12,8 +15,9 @@ type peerInfo struct {
 }
 
 type PeerTracker struct {
-	mu    sync.Mutex
-	peers map[string]peerInfo
+	mu         sync.Mutex
+	peers      map[string]peerInfo
+	atCapacity bool
 }
 
 func newPeerTracker() *PeerTracker {
@@ -27,6 +31,17 @@ func (t *PeerTracker) Touch(id, addr string) bool {
 	defer t.mu.Unlock()
 
 	_, existed := t.peers[id]
+	if !existed {
+		if len(t.peers) >= maxPeers {
+			if !t.atCapacity {
+				log.Printf("предупреждение: достигнут предел в %d отслеживаемых копий, новые ID игнорируются до освобождения места", maxPeers)
+				t.atCapacity = true
+			}
+			return false
+		}
+		t.atCapacity = false
+	}
+
 	t.peers[id] = peerInfo{
 		addr:     addr,
 		lastSeen: time.Now(),

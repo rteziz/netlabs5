@@ -25,6 +25,9 @@ func resolveInterface(name string, isIPv6 bool) (*net.Interface, error) {
 			if iface.Name != name {
 				continue
 			}
+			if iface.Flags&net.FlagUp == 0 {
+				return nil, fmt.Errorf("интерфейс %q выключен (down); подходящие интерфейсы: %s", name, describeInterfaces(ifaces, isIPv6))
+			}
 			if iface.Flags&net.FlagMulticast == 0 {
 				return nil, fmt.Errorf("интерфейс %q не поддерживает multicast; подходящие интерфейсы: %s", name, describeInterfaces(ifaces, isIPv6))
 			}

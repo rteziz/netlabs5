@@ -11,6 +11,8 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
+const multicastScopeTTL = 1
+
 func startSender(cfg *Config, selfID string, iface *net.Interface, stop <-chan struct{}) error {
 	network := networkKind(cfg.IsIPv6)
 
@@ -29,7 +31,12 @@ func startSender(cfg *Config, selfID string, iface *net.Interface, stop <-chan s
 	}
 
 	if err := setMulticastInterface(conn, iface, cfg.IsIPv6); err != nil {
-		log.Printf("предупреждение: не удалось явно закрепить исходящий multicast-интерфейс %s: %v (будет использован интерфейс по умолчанию ОС)", iface.Name, err)
+		conn.Close()
+		return fmt.Errorf("не удалось закрепить исходящий multicast-интерфейс %s: %w", iface.Name, err)
+	}
+
+	if err := setMulticastScope(conn, cfg.IsIPv6); err != nil {
+		log.Printf("предупреждение: не удалось ограничить TTL/hop limit multicast-пакетов: %v", err)
 	}
 
 	go sendLoop(conn, selfID, cfg.SendInterval, stop)
@@ -43,6 +50,13 @@ func setMulticastInterface(conn *net.UDPConn, iface *net.Interface, isIPv6 bool)
 		return ipv6.NewPacketConn(conn).SetMulticastInterface(iface)
 	}
 	return ipv4.NewPacketConn(conn).SetMulticastInterface(iface)
+}
+
+func setMulticastScope(conn *net.UDPConn, isIPv6 bool) error {
+	if isIPv6 {
+		return ipv6.NewPacketConn(conn).SetMulticastHopLimit(multicastScopeTTL)
+	}
+	return ipv4.NewPacketConn(conn).SetMulticastTTL(multicastScopeTTL)
 }
 
 func sendLoop(conn *net.UDPConn, selfID string, interval time.Duration, stop <-chan struct{}) {
@@ -63,7 +77,7 @@ func sendLoop(conn *net.UDPConn, selfID string, interval time.Duration, stop <-c
 }
 
 func sendAnnounce(conn *net.UDPConn, selfID string) {
-	if _, err := conn.Write([]byte(selfID)); err != nil {
+	if _, err := conn.Write(buildHeartbeat(selfID)); err != nil {
 		log.Printf("ошибка при отправке анонса присутствия: %v", err)
 	}
 }
