@@ -13,7 +13,7 @@ import (
 
 const multicastScopeTTL = 1
 
-func startSender(cfg *Config, selfID string, iface *net.Interface, stop <-chan struct{}) error {
+func startSender(cfg *Config, selfID, hostname string, iface *net.Interface, stop <-chan struct{}) error {
 	network := networkKind(cfg.IsIPv6)
 
 	groupAddr, err := net.ResolveUDPAddr(network, net.JoinHostPort(cfg.Group, strconv.Itoa(cfg.Port)))
@@ -36,10 +36,11 @@ func startSender(cfg *Config, selfID string, iface *net.Interface, stop <-chan s
 	}
 
 	if err := setMulticastScope(conn, cfg.IsIPv6); err != nil {
-		log.Printf("предупреждение: не удалось ограничить TTL/hop limit multicast-пакетов: %v", err)
+		conn.Close()
+		return fmt.Errorf("не удалось ограничить TTL/hop limit multicast-пакетов: %w", err)
 	}
 
-	go sendLoop(conn, selfID, cfg.SendInterval, stop)
+	go sendLoop(conn, buildHeartbeat(selfID, hostname), cfg.SendInterval, stop)
 
 	log.Printf("отправляю анонсы присутствия в группу %s каждые %s", groupAddr, cfg.SendInterval)
 	return nil
@@ -59,25 +60,25 @@ func setMulticastScope(conn *net.UDPConn, isIPv6 bool) error {
 	return ipv4.NewPacketConn(conn).SetMulticastTTL(multicastScopeTTL)
 }
 
-func sendLoop(conn *net.UDPConn, selfID string, interval time.Duration, stop <-chan struct{}) {
+func sendLoop(conn *net.UDPConn, payload []byte, interval time.Duration, stop <-chan struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	defer conn.Close()
 
-	sendAnnounce(conn, selfID)
+	sendAnnounce(conn, payload)
 
 	for {
 		select {
 		case <-ticker.C:
-			sendAnnounce(conn, selfID)
+			sendAnnounce(conn, payload)
 		case <-stop:
 			return
 		}
 	}
 }
 
-func sendAnnounce(conn *net.UDPConn, selfID string) {
-	if _, err := conn.Write(buildHeartbeat(selfID)); err != nil {
+func sendAnnounce(conn *net.UDPConn, payload []byte) {
+	if _, err := conn.Write(payload); err != nil {
 		log.Printf("ошибка при отправке анонса присутствия: %v", err)
 	}
 }

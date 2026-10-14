@@ -35,23 +35,24 @@ The client prints `Transfer successful` or `Transfer FAILED: <reason>`
   The folder is created automatically.
 - If a file with the same name already exists, it saves it as `name_1.ext`,
   `name_2.ext`, and so on. Existing files are never overwritten.
-- Only the last part of the file name is used, so nothing can be written
-  outside `../uploads`.
+- File names containing paths, empty names, and control characters are rejected.
 - Serves many clients at the same time.
-- Every 3 seconds, prints the instant and average rate (bytes per second) for
+- Every 3 seconds, prints the instant and average rate (automatically formatted as B/s, KB/s, MB/s, or GB/s) for
   each active client. A transfer shorter than 3 seconds is printed once at the end.
 
 Example output:
 
 ```
-2026/10/06 12:00:03 [127.0.0.1:52144] instant: 91234816 B/s, average: 91234816 B/s
+2026/10/06 12:00:03 [127.0.0.1:52144] instant: 91.23 MB/s, average: 91.23 MB/s
 2026/10/06 12:00:05 [127.0.0.1:52144] file received successfully
 ```
 
 ## Limits
 
-- File name: at most 4096 bytes, valid UTF-8.
-- File size: at most 1 TiB.
+- File name: 1–4096 bytes, valid UTF-8; no paths, `.`/`..`, blank names, or control characters.
+- Speed units use decimal multiples: 1 MB = 1,000,000 bytes.
+- File size: at most 1 TiB; empty files are allowed. Metadata is validated on both client and server.
+- The server checks the received byte count and rejects incomplete files.
 - If anything goes wrong, the server deletes the partial file, tells the client
   the transfer failed, closes that connection and keeps serving the others.
 

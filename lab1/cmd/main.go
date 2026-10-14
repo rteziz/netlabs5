@@ -14,7 +14,17 @@ func main() {
 		log.Fatalf("ошибка конфигурации: %v", err)
 	}
 
-	selfID := generateInstanceID()
+	selfID, err := generateInstanceID()
+	if err != nil {
+		log.Fatal(err)
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		log.Fatalf("не удалось получить hostname: %v", err)
+	}
+	if !isValidHostname(hostname) {
+		log.Fatalf("некорректный hostname: нужны ASCII-буквы, цифры, дефисы и точки; не более %d байт, метки до 63 байт", maxHostnameLen)
+	}
 	log.Printf("идентификатор этого экземпляра приложения: %s", selfID)
 
 	protoName := "IPv4"
@@ -37,7 +47,7 @@ func main() {
 		log.Fatalf("не удалось запустить приём multicast-сообщений: %v", err)
 	}
 
-	if err := startSender(cfg, selfID, iface, stop); err != nil {
+	if err := startSender(cfg, selfID, hostname, iface, stop); err != nil {
 		log.Fatalf("не удалось запустить отправку multicast-сообщений: %v", err)
 	}
 

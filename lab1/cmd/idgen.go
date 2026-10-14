@@ -1,17 +1,22 @@
 package main
 
 import (
-	crand "crypto/rand"
+	"crypto/rand"
 	"encoding/hex"
-	mrand "math/rand"
+	"fmt"
+	"io"
 )
 
 const instanceIDBytes = 8
 
-func generateInstanceID() string {
+func generateInstanceID() (string, error) {
+	return readInstanceID(rand.Reader)
+}
+
+func readInstanceID(source io.Reader) (string, error) {
 	buf := make([]byte, instanceIDBytes)
-	if _, err := crand.Read(buf); err != nil {
-		mrand.Read(buf)
+	if _, err := io.ReadFull(source, buf); err != nil {
+		return "", fmt.Errorf("не удалось создать уникальный ID: %w", err)
 	}
-	return hex.EncodeToString(buf)
+	return hex.EncodeToString(buf), nil
 }

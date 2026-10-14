@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -23,11 +25,8 @@ type Header struct {
 }
 
 func WriteHeader(w io.Writer, h Header) error {
-	if len(h.Name) > MaxNameLen {
-		return fmt.Errorf("file name is longer than %d bytes", MaxNameLen)
-	}
-	if h.Size > MaxFileSize {
-		return fmt.Errorf("file is larger than %d bytes", uint64(MaxFileSize))
+	if err := h.Validate(); err != nil {
+		return err
 	}
 	if err := binary.Write(w, byteOrder, uint16(len(h.Name))); err != nil {
 		return err
@@ -43,8 +42,8 @@ func ReadHeader(r io.Reader) (Header, error) {
 	if err := binary.Read(r, byteOrder, &nameLen); err != nil {
 		return Header{}, fmt.Errorf("reading name length: %w", err)
 	}
-	if nameLen > MaxNameLen {
-		return Header{}, fmt.Errorf("name length %d exceeds %d", nameLen, MaxNameLen)
+	if nameLen == 0 || nameLen > MaxNameLen {
+		return Header{}, fmt.Errorf("invalid name length %d (maximum %d)", nameLen, MaxNameLen)
 	}
 
 	name := make([]byte, nameLen)
@@ -59,8 +58,38 @@ func ReadHeader(r io.Reader) (Header, error) {
 	if err := binary.Read(r, byteOrder, &size); err != nil {
 		return Header{}, fmt.Errorf("reading file size: %w", err)
 	}
-	if size > MaxFileSize {
-		return Header{}, fmt.Errorf("file size %d exceeds %d", size, uint64(MaxFileSize))
+	h := Header{Name: string(name), Size: size}
+	if err := h.Validate(); err != nil {
+		return Header{}, err
 	}
-	return Header{Name: string(name), Size: size}, nil
+	return h, nil
+}
+
+// Validate checks the metadata before sending or accepting a file.
+func (h Header) Validate() error {
+	if err := ValidateFileName(h.Name); err != nil {
+		return err
+	}
+	if h.Size > MaxFileSize {
+		return fmt.Errorf("file size %d exceeds %d bytes", h.Size, uint64(MaxFileSize))
+	}
+	return nil
+}
+
+func ValidateFileName(name string) error {
+	if len(name) == 0 || len(name) > MaxNameLen {
+		return fmt.Errorf("file name must contain 1 to %d bytes", MaxNameLen)
+	}
+	if !utf8.ValidString(name) {
+		return fmt.Errorf("file name is not valid UTF-8")
+	}
+	if strings.TrimSpace(name) == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("invalid file name %q: expected a file name without a path", name)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("invalid file name %q: control characters are not allowed", name)
+		}
+	}
+	return nil
 }

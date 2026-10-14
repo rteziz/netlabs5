@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
@@ -26,10 +27,10 @@ func (m *Meter) Report(client string, stop <-chan struct{}) {
 	printRates := func() {
 		now := time.Now()
 		total := m.total.Load()
-		log.Printf("[%s] instant: %.0f B/s, average: %.0f B/s",
+		log.Printf("[%s] instant: %s, average: %s",
 			client,
-			bytesPerSecond(total-lastTotal, now.Sub(lastTime)),
-			bytesPerSecond(total, now.Sub(start)))
+			formatRate(bytesPerSecond(total-lastTotal, now.Sub(lastTime))),
+			formatRate(bytesPerSecond(total, now.Sub(start))))
 		lastTime, lastTotal, printed = now, total, true
 	}
 
@@ -53,4 +54,17 @@ func bytesPerSecond(bytes int64, elapsed time.Duration) float64 {
 		return 0
 	}
 	return float64(bytes) / elapsed.Seconds()
+}
+
+func formatRate(rate float64) string {
+	switch {
+	case rate >= 1e9:
+		return fmt.Sprintf("%.2f GB/s", rate/1e9)
+	case rate >= 1e6:
+		return fmt.Sprintf("%.2f MB/s", rate/1e6)
+	case rate >= 1e3:
+		return fmt.Sprintf("%.2f KB/s", rate/1e3)
+	default:
+		return fmt.Sprintf("%.2f B/s", rate)
+	}
 }

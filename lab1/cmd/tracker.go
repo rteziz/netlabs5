@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"sort"
 	"sync"
@@ -11,6 +12,7 @@ const maxPeers = 1000
 
 type peerInfo struct {
 	addr     string
+	hostname string
 	lastSeen time.Time
 }
 
@@ -26,11 +28,11 @@ func newPeerTracker() *PeerTracker {
 	}
 }
 
-func (t *PeerTracker) Touch(id, addr string) bool {
+func (t *PeerTracker) Touch(id, addr, hostname string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	_, existed := t.peers[id]
+	previous, existed := t.peers[id]
 	if !existed {
 		if len(t.peers) >= maxPeers {
 			if !t.atCapacity {
@@ -44,9 +46,10 @@ func (t *PeerTracker) Touch(id, addr string) bool {
 
 	t.peers[id] = peerInfo{
 		addr:     addr,
+		hostname: hostname,
 		lastSeen: time.Now(),
 	}
-	return !existed
+	return !existed || previous.addr != addr || previous.hostname != hostname
 }
 
 func (t *PeerTracker) RemoveExpired(timeout time.Duration) bool {
@@ -69,8 +72,8 @@ func (t *PeerTracker) Snapshot() []string {
 	defer t.mu.Unlock()
 
 	addrs := make([]string, 0, len(t.peers))
-	for _, info := range t.peers {
-		addrs = append(addrs, info.addr)
+	for id, info := range t.peers {
+		addrs = append(addrs, fmt.Sprintf("IP: %s | ID: %s | hostname: %s", info.addr, id, info.hostname))
 	}
 	sort.Strings(addrs)
 	return addrs

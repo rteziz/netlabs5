@@ -27,7 +27,7 @@ func startListener(cfg *Config, selfID string, iface *net.Interface, tracker *Pe
 }
 
 func receiveLoop(conn *net.UDPConn, selfID string, tracker *PeerTracker) {
-	buf := make([]byte, 1024)
+	buf := make([]byte, maxHeartbeatSize+1)
 
 	for {
 		n, srcAddr, err := conn.ReadFromUDP(buf)
@@ -36,19 +36,19 @@ func receiveLoop(conn *net.UDPConn, selfID string, tracker *PeerTracker) {
 			return
 		}
 
-		receivedID, ok := parseHeartbeat(buf[:n])
+		message, ok := parseHeartbeat(buf[:n])
 		if !ok {
 			continue
 		}
 
-		if receivedID == selfID {
+		if message.ID == selfID {
 			continue
 		}
 
 		peerIP := srcAddr.IP.String()
 
-		if tracker.Touch(receivedID, peerIP) {
-			printPeers(tracker, fmt.Sprintf("обнаружена новая копия приложения: %s", peerIP))
+		if tracker.Touch(message.ID, peerIP, message.Hostname) {
+			printPeers(tracker, fmt.Sprintf("обнаружена или обновлена копия приложения: %s", peerIP))
 		}
 	}
 }

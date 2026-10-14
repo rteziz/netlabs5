@@ -45,13 +45,17 @@ func sendFile(path, address string) error {
 		return fmt.Errorf("%s is not a regular file", path)
 	}
 
+	header := protocol.Header{Name: filepath.Base(path), Size: uint64(info.Size())}
+	if err := header.Validate(); err != nil {
+		return err
+	}
+
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	header := protocol.Header{Name: filepath.Base(path), Size: uint64(info.Size())}
 	if err := protocol.WriteHeader(conn, header); err != nil {
 		return err
 	}

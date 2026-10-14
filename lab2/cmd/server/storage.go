@@ -2,10 +2,10 @@ package main
 
 import (
 	"errors"
+	"filetransfer/protocol"
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -17,12 +17,10 @@ const (
 )
 
 func safeFileName(clientName string) (string, error) {
-	name := strings.ReplaceAll(clientName, `\`, "/")
-	name = path.Base(name)
-	if name == "." || name == ".." || name == "/" || strings.ContainsRune(name, 0) {
-		return "", fmt.Errorf("invalid file name %q", clientName)
+	if err := protocol.ValidateFileName(clientName); err != nil {
+		return "", err
 	}
-	return name, nil
+	return clientName, nil
 }
 
 func createUniqueFile(name string) (*os.File, string, error) {
