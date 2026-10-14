@@ -47,6 +47,20 @@ func isValidInstanceID(id string) bool {
 	return err == nil
 }
 
+func truncateHostname(hostname string) string {
+	labels := strings.Split(hostname, ".")
+	for i, label := range labels {
+		if len(label) > 63 {
+			labels[i] = strings.TrimRight(label[:63], "-")
+		}
+	}
+	hostname = strings.Join(labels, ".")
+	if len(hostname) > maxHostnameLen {
+		hostname = strings.TrimRight(hostname[:maxHostnameLen], ".-")
+	}
+	return hostname
+}
+
 // Hostname consists of ASCII labels separated by dots, with no control characters.
 func isValidHostname(hostname string) bool {
 	if len(hostname) == 0 || len(hostname) > maxHostnameLen {

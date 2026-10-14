@@ -22,6 +22,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("не удалось получить hostname: %v", err)
 	}
+	if shortened := truncateHostname(hostname); shortened != hostname {
+		log.Printf("hostname сокращён для отправки: %q", shortened)
+		hostname = shortened
+	}
 	if !isValidHostname(hostname) {
 		log.Fatalf("некорректный hostname: нужны ASCII-буквы, цифры, дефисы и точки; не более %d байт, метки до 63 байт", maxHostnameLen)
 	}
