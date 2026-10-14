@@ -1,0 +1,11 @@
+services:
+  server:
+    build: .
+    ports:
+      - "9000:9000"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      RATE: "${RATE:-80mbit}"
+    volumes:
+      - ./uploads:/app/uploads

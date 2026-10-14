@@ -10,9 +10,10 @@ import (
 	"filetransfer/protocol"
 )
 
-func handleClient(conn net.Conn) {
+func handleClient(conn net.Conn, id int) {
 	defer conn.Close()
-	client := conn.RemoteAddr().String()
+	client := fmt.Sprintf("client-%d %s", id, conn.RemoteAddr())
+	log.Printf("[%s] connected", client)
 
 	status := protocol.StatusOK
 	if err := receiveFile(conn, client); err != nil {
@@ -57,8 +58,15 @@ func receiveFile(conn net.Conn, client string) error {
 func copyBody(conn net.Conn, dst io.Writer, size uint64, client string) (int64, error) {
 	meter := &Meter{}
 	stop := make(chan struct{})
-	defer close(stop)
-	go meter.Report(client, stop)
+	done := make(chan struct{})
+	defer func() {
+		close(stop)
+		<-done // Finish all log output before the client ID can be reused.
+	}()
+	go func() {
+		defer close(done)
+		meter.Report(client, stop)
+	}()
 
 	body := io.TeeReader(io.LimitReader(conn, int64(size)), meter)
 	return io.Copy(dst, body)

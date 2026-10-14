@@ -1,86 +1,150 @@
-# File transfer over TCP
+# Передача файлов по TCP
 
-A simple client and server for sending a file over TCP. The server prints the
-receive rate for each client.
+Простой клиент и сервер для передачи файла по TCP. Сервер выводит скорость
+приёма данных для каждого клиента.
 
-## Build
+## Сборка
 
-Run from the project root (the folder with `../go.mod`):
+Выполняйте команды из каталога `lab2`, в котором находится `go.mod`:
 
-```
+```bash
 go build -o server ./cmd/server
 go build -o client ./cmd/client
 ```
 
-## Run
+## Запуск
 
-Start the server with a port number:
+Запустите сервер, указав номер порта:
 
-```
+```bash
 ./server 9000
 ```
 
-Send a file with the client: file path, server host (DNS name or IP), port:
+## Сервер в Docker с ограничением сети
 
+Нужен запущенный Docker Desktop. Из каталога `lab2`:
+
+```bash
+docker compose up --build
 ```
+
+Сервер доступен на `localhost:9000`, файлы сохраняются в `lab2/uploads`.
+Если обычный сервер уже слушает порт 9000, сначала остановите его.
+По умолчанию входящий трафик контейнера ограничен до **80 Мбит/с**
+(примерно 10 МБ/с суммарно для всех клиентов).
+
+Изменить ограничение или отключить его:
+
+```bash
+RATE=40mbit docker compose up --build --force-recreate
+RATE=0 docker compose up --build --force-recreate
+```
+
+Остановить контейнер:
+
+```bash
+docker compose down
+```
+
+Ограничение задаётся Linux-утилитой `tc` внутри контейнера. Для этого Compose
+выдаёт контейнеру возможность `NET_ADMIN`. Go-сервер больше не имеет флага `-rate`.
+Используется ограничение входящего потока (`ingress policing`): пакеты сверх
+лимита отбрасываются, TCP повторяет передачу и снижает скорость. Поэтому скорость
+может колебаться и быть ниже указанного лимита; разрешён короткий всплеск до 256 КиБ.
+Это общий сетевой лимит, равная доля скорости каждому клиенту не гарантируется.
+Если настройка `tc` не удалась, контейнер завершится с ошибкой, а не запустится без лимита.
+
+Чтобы проверить параллельную передачу, запустите в одном терминале:
+
+```bash
+go run ./cmd/client ./debian-13.4.0-arm64-netinst.iso localhost 9000
+```
+
+Пока ISO передаётся, в другом терминале выполните:
+
+```bash
+go run ./cmd/client ./unknown.png localhost 9000
+```
+
+В другом терминале отправьте файл с помощью клиента. Аргументы: путь к файлу,
+адрес сервера (DNS-имя или IP-адрес) и порт:
+
+```bash
 ./client ./photo.jpg localhost 9000
 ```
 
-The client prints `Transfer successful` or `Transfer FAILED: <reason>`
-(exit code 1 on failure).
+Клиент выводит `Transfer successful` при успехе или `Transfer FAILED: <причина>`
+при ошибке. В случае ошибки программа завершается с кодом `1`.
 
-## What the server does
+## Как работает сервер
 
-- Saves files into the `../uploads` folder in its current directory.
-  The folder is created automatically.
-- If a file with the same name already exists, it saves it as `name_1.ext`,
-  `name_2.ext`, and so on. Existing files are never overwritten.
-- File names containing paths, empty names, and control characters are rejected.
-- Serves many clients at the same time.
-- Every 3 seconds, prints the instant and average rate (automatically formatted as B/s, KB/s, MB/s, or GB/s) for
-  each active client. A transfer shorter than 3 seconds is printed once at the end.
+- Сохраняет файлы в папку `uploads` относительно текущего рабочего каталога.
+  Папка создаётся автоматически.
+- Если файл с таким именем уже существует, использует имя `name_1.ext`,
+  `name_2.ext` и так далее. Существующие файлы не перезаписываются.
+- Отклоняет пустые имена, имена с путями и управляющими символами.
+- Обслуживает не более 16 клиентов одновременно. Если все места заняты,
+  сервер закрывает новые подключения и пишет причину в журнал. Место освобождается
+  после завершения обработки клиента, в том числе при ошибке.
+- Каждому активному клиенту назначается ID от 1 до 16. В журнале он отображается
+  как `client-1` вместе с адресом. После завершения обработки ID можно использовать снова.
+- Каждые 3 секунды выводит скорость за последний интервал (`instant`) и среднюю
+  скорость с начала измерения (`average`) для каждого активного клиента.
+  Единицы выбираются автоматически: B/s, KB/s, MB/s или GB/s.
+  Для передачи длительностью менее 3 секунд скорость выводится один раз в конце.
 
-Example output:
+Пример вывода:
 
+```text
+2026/10/06 12:00:03 [client-1 127.0.0.1:52144] instant: 91.23 MB/s, average: 91.23 MB/s
+2026/10/06 12:00:05 [client-1 127.0.0.1:52144] file received successfully
 ```
-2026/10/06 12:00:03 [127.0.0.1:52144] instant: 91.23 MB/s, average: 91.23 MB/s
-2026/10/06 12:00:05 [127.0.0.1:52144] file received successfully
-```
 
-## Limits
+## Ограничения и проверки
 
-- File name: 1–4096 bytes, valid UTF-8; no paths, `.`/`..`, blank names, or control characters.
-- Speed units use decimal multiples: 1 MB = 1,000,000 bytes.
-- File size: at most 1 TiB; empty files are allowed. Metadata is validated on both client and server.
-- The server checks the received byte count and rejects incomplete files.
-- If anything goes wrong, the server deletes the partial file, tells the client
-  the transfer failed, closes that connection and keeps serving the others.
+- Порт клиента и сервера: целое число от 1 до 65535.
+- Адрес сервера: IPv4, IPv6 без квадратных скобок или DNS-имя из латинских
+  букв, цифр и дефисов в метках (например, `localhost` или `example.com`).
+  URL и адрес с портом в одном аргументе не допускаются: порт передаётся отдельно.
+  Существование DNS-имени проверяется при подключении.
 
-## Protocol
+- Имя файла: от 1 до 4096 байтов, корректный UTF-8. Запрещены пути, `.` и `..`,
+  имена только из пробельных символов и управляющие символы.
+- Для скорости используются десятичные единицы: 1 MB = 1 000 000 байтов.
+- Размер файла: не более 1 TiB (1 099 511 627 776 байтов). Пустые файлы разрешены.
+  Имя и размер проверяются и на клиенте, и на сервере.
+- Сервер проверяет количество полученных байтов и отклоняет неполные файлы.
+- При ошибке приёма сервер пытается удалить частично записанный файл и сообщить
+  клиенту о неудаче, закрывает соединение и продолжает обслуживать других клиентов.
 
-Client to server:
+## Протокол
 
-| Field       | Size                | Notes                  |
-|-------------|---------------------|------------------------|
-| name length | 2 bytes, big-endian | in bytes               |
-| file name   | name length bytes   | UTF-8                  |
-| file size   | 8 bytes, big-endian | in bytes               |
-| contents    | file size bytes     | the file itself        |
+Клиент отправляет серверу поля в следующем порядке:
 
-Server to client, after the whole file is received:
+| Поле | Размер | Описание |
+|------|--------|----------|
+| Длина имени | 2 байта, big-endian | Длина имени в байтах |
+| Имя файла | Указанная длина имени | Строка в UTF-8 |
+| Размер файла | 8 байтов, big-endian | Размер содержимого в байтах |
+| Содержимое | Указанный размер файла | Байты самого файла |
 
-| Field  | Size   | Notes                      |
-|--------|--------|----------------------------|
-| status | 1 byte | `0` = success, `1` = failure |
+Порядок байтов big-endian означает, что старший байт числа передаётся первым.
 
-## Project layout
+Сервер отправляет клиенту результат обработки:
 
-```
+| Поле | Размер | Описание |
+|------|--------|----------|
+| Статус | 1 байт | `0` — успех, `1` — ошибка |
+
+## Структура проекта
+
+```text
 go.mod
-protocol/protocol.go     wire format shared by client and server
-cmd/server/main.go       listens, starts a goroutine per client
-cmd/server/handler.go    receives one file and sends the status
-cmd/server/storage.go    safe file naming and creation in uploads/
-cmd/server/meter.go      speed reporting
-cmd/client/main.go       sends the file
+protocol/protocol.go     общий формат передачи данных и валидация
+protocol/validate.go     общая проверка порта и адреса сервера
+cmd/server/main.go       приём подключений, запуск горутины для каждого клиента
+cmd/server/handler.go    получение файла и отправка статуса
+cmd/server/storage.go    проверка имени и создание файла в uploads/
+cmd/server/meter.go      подсчёт и вывод скорости
+cmd/client/main.go       отправка файла и ожидание статуса
 ```

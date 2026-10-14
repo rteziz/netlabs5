@@ -1,0 +1,9 @@
+*
+!go.mod
+!protocol/
+!protocol/**
+!cmd/
+!cmd/server/
+!cmd/server/**
+!docker-entrypoint.sh
+!Dockerfile

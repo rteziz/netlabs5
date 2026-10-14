@@ -6,7 +6,8 @@
 *.dylib
 mcdisc
 *.png
-
+*.iso
+*.jpg
 # Тестовые файлы
 *.test
 

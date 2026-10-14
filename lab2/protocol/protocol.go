@@ -65,7 +65,6 @@ func ReadHeader(r io.Reader) (Header, error) {
 	return h, nil
 }
 
-// Validate checks the metadata before sending or accepting a file.
 func (h Header) Validate() error {
 	if err := ValidateFileName(h.Name); err != nil {
 		return err

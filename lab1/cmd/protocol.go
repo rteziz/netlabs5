@@ -61,7 +61,6 @@ func truncateHostname(hostname string) string {
 	return hostname
 }
 
-// Hostname consists of ASCII labels separated by dots, with no control characters.
 func isValidHostname(hostname string) bool {
 	if len(hostname) == 0 || len(hostname) > maxHostnameLen {
 		return false

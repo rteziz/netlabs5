@@ -21,6 +21,13 @@ func main() {
 	if len(os.Args) != argCount {
 		log.Fatalf("usage: %s <file> <host> <port>", os.Args[0])
 	}
+	if err := protocol.ValidatePort(os.Args[portArg]); err != nil {
+		log.Fatal(err)
+	}
+	if err := protocol.ValidateHost(os.Args[hostArg]); err != nil {
+		log.Fatal(err)
+	}
+
 	address := net.JoinHostPort(os.Args[hostArg], os.Args[portArg])
 
 	if err := sendFile(os.Args[pathArg], address); err != nil {

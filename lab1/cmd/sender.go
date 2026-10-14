@@ -30,7 +30,7 @@ func startSender(cfg *Config, selfID, hostname string, iface *net.Interface, sto
 		return fmt.Errorf("не удалось открыть сокет для отправки анонсов: %w", err)
 	}
 
-	if err := setMulticastInterface(conn, iface, cfg.IsIPv6); err != nil {
+	if err := setMulticastInterface(conn, iface, cfg.IsIPv6); err != nil { //вот
 		conn.Close()
 		return fmt.Errorf("не удалось закрепить исходящий multicast-интерфейс %s: %w", iface.Name, err)
 	}
