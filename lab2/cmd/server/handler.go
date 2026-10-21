@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,7 +12,13 @@ import (
 )
 
 func handleClient(conn net.Conn, id int) {
-	defer conn.Close()
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+
+		}
+	}(conn)
+	conn = &protocol.IdleConn{Conn: conn, Timeout: protocol.IdleTimeout}
 	client := fmt.Sprintf("client-%d %s", id, conn.RemoteAddr())
 	log.Printf("[%s] connected", client)
 
@@ -50,7 +57,9 @@ func receiveFile(conn net.Conn, client string) error {
 		err = fmt.Errorf("size mismatch: expected %d bytes, got %d", header.Size, received)
 	}
 	if err != nil {
-		os.Remove(path)
+		if removeErr := os.Remove(path); removeErr != nil {
+			return errors.Join(err, fmt.Errorf("remove partial file: %w", removeErr))
+		}
 	}
 	return err
 }
@@ -61,7 +70,7 @@ func copyBody(conn net.Conn, dst io.Writer, size uint64, client string) (int64, 
 	done := make(chan struct{})
 	defer func() {
 		close(stop)
-		<-done // Finish all log output before the client ID can be reused.
+		<-done
 	}()
 	go func() {
 		defer close(done)

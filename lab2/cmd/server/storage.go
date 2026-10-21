@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"errors"
 	"filetransfer/protocol"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -24,6 +26,8 @@ func safeFileName(clientName string) (string, error) {
 }
 
 func createUniqueFile(name string) (*os.File, string, error) {
+	compact := false
+	digest := sha256.Sum256([]byte(name))
 	ext := filepath.Ext(name)
 	stem := strings.TrimSuffix(name, ext)
 
@@ -32,11 +36,19 @@ func createUniqueFile(name string) (*os.File, string, error) {
 		if i > 0 {
 			candidate = fmt.Sprintf("%s_%d%s", stem, i, ext)
 		}
+		if compact {
+			candidate = fmt.Sprintf("file-%x_%d", digest[:16], i)
+		}
 		fullPath := filepath.Join(UploadsDir, candidate)
 
 		file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, uploadedFilePerm)
 		if err == nil {
 			return file, fullPath, nil
+		}
+		if errors.Is(err, syscall.ENAMETOOLONG) && !compact {
+			compact = true
+			i--
+			continue
 		}
 		if !errors.Is(err, fs.ErrExist) {
 			return nil, "", err

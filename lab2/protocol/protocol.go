@@ -10,11 +10,10 @@ import (
 )
 
 const (
-	MaxNameLen  = 4096
-	MaxFileSize = 1 << 40
-
-	StatusOK   byte = 0
-	StatusFail byte = 1
+	MaxNameLen       = 4096
+	MaxFileSize      = 1 << 40
+	StatusOK    byte = 0
+	StatusFail  byte = 1
 )
 
 var byteOrder = binary.BigEndian

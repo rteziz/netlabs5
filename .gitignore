@@ -10,7 +10,7 @@ mcdisc
 *.jpg
 # Тестовые файлы
 *.test
-
+CODE_WALKTHROUGH.md
 # Профилировка
 *.prof
 
