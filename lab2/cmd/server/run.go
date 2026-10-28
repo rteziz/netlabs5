@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"filetransfer/protocol"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -83,14 +84,19 @@ func run() {
 func rejectClient(conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			log.Printf("[%s] cannot close rejected connection: %v", conn.RemoteAddr(), err)
+			log.Printf("close rejected client: %v", err)
 		}
 	}()
-	if err := conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
-		log.Printf("[%s] cannot set rejection deadline: %v", conn.RemoteAddr(), err)
+	// One absolute deadline bounds both the status write and draining incoming data.
+	if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
 		return
 	}
 	if _, err := conn.Write([]byte{protocol.StatusBusy}); err != nil {
-		log.Printf("[%s] cannot send busy status: %v", conn.RemoteAddr(), err)
+		return
 	}
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.CloseWrite()
+	}
+	// Discard data already being sent to reduce the chance of a reset on close.
+	_, _ = io.Copy(io.Discard, conn)
 }

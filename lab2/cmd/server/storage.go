@@ -22,6 +22,11 @@ func safeFileName(clientName string) (string, error) {
 	if err := protocol.ValidateFileName(clientName); err != nil {
 		return "", err
 	}
+	// Map names that cannot be used safely as one local path component.
+	if clientName == "." || clientName == ".." || strings.ContainsAny(clientName, "/\\\x00") {
+		digest := sha256.Sum256([]byte(clientName))
+		return fmt.Sprintf("file-%x", digest[:16]), nil
+	}
 	return clientName, nil
 }
 

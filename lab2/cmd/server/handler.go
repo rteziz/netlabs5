@@ -22,15 +22,10 @@ func handleClient(conn net.Conn, id int) {
 	client := fmt.Sprintf("client-%d %s", id, conn.RemoteAddr())
 	log.Printf("[%s] connected", client)
 
-	if _, err := conn.Write([]byte{protocol.StatusReady}); err != nil {
-		log.Printf("[%s] cannot send admission status: %v", client, err)
-		return
-	}
-
 	status := protocol.StatusOK
 	if err := receiveFile(conn, client); err != nil {
-		log.Printf("[%s] failed: %v", client, err)
 		status = protocol.StatusFail
+		log.Printf("[%s] failed: %v", client, err)
 	}
 
 	if _, err := conn.Write([]byte{status}); err != nil {
@@ -46,6 +41,7 @@ func receiveFile(conn net.Conn, client string) error {
 	if err != nil {
 		return err
 	}
+	meter.fileName.Store(header.Name)
 	name, err := safeFileName(header.Name)
 	if err != nil {
 		return err

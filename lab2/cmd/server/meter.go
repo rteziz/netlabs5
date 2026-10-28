@@ -10,8 +10,9 @@ import (
 const ReportInterval = 3 * time.Second
 
 type Meter struct {
-	total atomic.Int64
-	start time.Time
+	total    atomic.Int64
+	fileName atomic.Value // string; shared with the receiving goroutine
+	start    time.Time
 }
 
 func (m *Meter) Write(p []byte) (int, error) {
@@ -34,8 +35,12 @@ func (m *Meter) Report(client string, stop <-chan struct{}) {
 		if final {
 			kind = "final"
 		}
-		log.Printf("[%s] %s: instant: %s, average: %s",
-			client, kind,
+		label := "ожидание имени файла"
+		if name, ok := m.fileName.Load().(string); ok {
+			label = fmt.Sprintf("file %q", name)
+		}
+		log.Printf("[%s] %s %s: instant: %s, average: %s",
+			client, label, kind,
 			formatRate(bytesPerSecond(total-lastTotal, now.Sub(lastTime))),
 			formatRate(bytesPerSecond(total, now.Sub(start))))
 		lastTime, lastTotal = now, total

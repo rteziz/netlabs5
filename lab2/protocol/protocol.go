@@ -4,18 +4,15 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
 const (
+	StatusFail  byte = 0
+	StatusOK    byte = 1
+	StatusBusy  byte = 2
 	MaxNameLen       = 4096
 	MaxFileSize      = 1 << 40
-	StatusOK    byte = 1
-	StatusFail  byte = 0
-	StatusBusy  byte = 2
-	StatusReady byte = 3
 )
 
 var byteOrder = binary.BigEndian
@@ -82,14 +79,6 @@ func ValidateFileName(name string) error {
 	}
 	if !utf8.ValidString(name) {
 		return fmt.Errorf("file name is not valid UTF-8")
-	}
-	if strings.TrimSpace(name) == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		return fmt.Errorf("invalid file name %q: expected a file name without a path", name)
-	}
-	for _, r := range name {
-		if unicode.IsControl(r) {
-			return fmt.Errorf("invalid file name %q: control characters are not allowed", name)
-		}
 	}
 	return nil
 }

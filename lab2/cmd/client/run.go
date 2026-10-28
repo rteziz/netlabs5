@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"filetransfer/protocol"
 	"fmt"
 	"io"
@@ -10,29 +11,23 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-)
-
-const (
-	argCount = 4
-	pathArg  = 1
-	hostArg  = 2
-	portArg  = 3
+	"time"
 )
 
 func run() {
-	if len(os.Args) != argCount {
+	if len(os.Args) != 4 {
 		log.Fatalf("usage: %s <file> <host> <port>", os.Args[0])
 	}
-	if err := protocol.ValidatePort(os.Args[portArg]); err != nil {
+	path, host, port := os.Args[1], os.Args[2], os.Args[3]
+	if err := protocol.ValidatePort(port); err != nil {
 		log.Fatal(err)
 	}
-	address := net.JoinHostPort(os.Args[hostArg], os.Args[portArg])
-
-	if err := sendFile(os.Args[pathArg], address); err != nil {
+	if err := sendFile(path, net.JoinHostPort(host, port)); err != nil {
 		fmt.Println("Transfer FAILED:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Transfer successful: %q\n", filepath.Base(os.Args[pathArg]))
+	fmt.Printf("Transfer successful: %q\n", filepath.Base(path))
+	fmt.Println("Local contents check: SHA-256 matches")
 }
 
 func sendFile(path, address string) error {
@@ -60,7 +55,8 @@ func sendFile(path, address string) error {
 		return err
 	}
 
-	before, err := hashFile(file)
+	var before []byte
+	before, err = hashFile(file)
 	if err != nil {
 		return err
 	}
@@ -75,22 +71,20 @@ func sendFile(path, address string) error {
 	}(conn)
 
 	conn = &protocol.IdleConn{Conn: conn, Timeout: protocol.IdleTimeout}
-	if err := waitForAdmission(conn); err != nil {
-		return err
-	}
 	if err := protocol.WriteHeader(conn, header); err != nil {
-		return err
+		return sendError(conn, err)
 	}
 	sentHash := sha256.New()
-	if _, err := io.CopyN(io.MultiWriter(conn, sentHash), file, int64(header.Size)); err != nil {
-		return err
+	destination := io.MultiWriter(conn, sentHash)
+	if _, err := io.CopyN(destination, file, int64(header.Size)); err != nil {
+		return sendError(conn, err)
 	}
 	current, err := file.Stat()
 	if err != nil {
 		return err
 	}
 	if current.Size() != info.Size() {
-		return fmt.Errorf("file size changed during transfer: was %d, now %d", info.Size(), current.Size())
+		return fmt.Errorf("file size changed during transfer")
 	}
 	if !bytes.Equal(before, sentHash.Sum(nil)) {
 		return fmt.Errorf("file contents changed during transfer")
@@ -102,49 +96,36 @@ func sendFile(path, address string) error {
 	if !bytes.Equal(before, after) {
 		return fmt.Errorf("file contents changed during transfer")
 	}
-	return waitForStatus(conn)
+	return readStatus(conn)
 }
 
-func waitForStatus(conn net.Conn) error {
-	status := make([]byte, 1)
-	if _, err := io.ReadFull(conn, status); err != nil {
-		return fmt.Errorf("no answer from server: %w", err)
+func readStatus(conn net.Conn) error {
+	var status [1]byte
+	if _, err := io.ReadFull(conn, status[:]); err != nil {
+		return fmt.Errorf("cannot read server response: %w", err)
 	}
 	switch status[0] {
 	case protocol.StatusOK:
 		return nil
 	case protocol.StatusFail:
-		return fmt.Errorf("server reported a failure while receiving the file (status %d); check server logs", status[0])
-	default:
-		return fmt.Errorf("unexpected final status %d; rebuild both client and server from the same sources", status[0])
-	}
-}
-
-func waitForAdmission(conn net.Conn) error {
-	var status [1]byte
-	if _, err := io.ReadFull(conn, status[:]); err != nil {
-		return fmt.Errorf("no admission response from server: %w", err)
-	}
-	switch status[0] {
-	case protocol.StatusReady:
-		return nil
+		return fmt.Errorf("server could not receive or save the file")
 	case protocol.StatusBusy:
-		return fmt.Errorf("server is full: no free slots for receiving files; try again later")
+		return fmt.Errorf("server is busy: no free slots; try again later")
 	default:
-		return fmt.Errorf("unexpected admission status: %d", status[0])
+		return fmt.Errorf("unknown server status: %d", status[0])
 	}
 }
 
-func hashFile(file *os.File) ([]byte, error) {
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+func sendError(conn net.Conn, sendErr error) error {
+	// Bypass IdleConn so it cannot overwrite this shorter response deadline.
+	if wrapped, ok := conn.(*protocol.IdleConn); ok {
+		conn = wrapped.Conn
 	}
-	h := sha256.New()
-	if _, err := io.Copy(h, file); err != nil {
-		return nil, err
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.CloseWrite()
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return errors.Join(sendErr, err)
 	}
-	return h.Sum(nil), nil
+	return errors.Join(sendErr, readStatus(conn))
 }
