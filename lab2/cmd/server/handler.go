@@ -22,12 +22,15 @@ func handleClient(conn net.Conn, id int) {
 	client := fmt.Sprintf("client-%d %s", id, conn.RemoteAddr())
 	log.Printf("[%s] connected", client)
 
+	if _, err := conn.Write([]byte{protocol.StatusReady}); err != nil {
+		log.Printf("[%s] cannot send admission status: %v", client, err)
+		return
+	}
+
 	status := protocol.StatusOK
 	if err := receiveFile(conn, client); err != nil {
 		log.Printf("[%s] failed: %v", client, err)
 		status = protocol.StatusFail
-	} else {
-		log.Printf("[%s] file received successfully", client)
 	}
 
 	if _, err := conn.Write([]byte{status}); err != nil {
@@ -36,7 +39,10 @@ func handleClient(conn net.Conn, id int) {
 }
 
 func receiveFile(conn net.Conn, client string) error {
-	header, err := protocol.ReadHeader(conn)
+	meter, finish := startMeter(client)
+	defer finish()
+	source := io.TeeReader(conn, meter)
+	header, err := protocol.ReadHeader(source)
 	if err != nil {
 		return err
 	}
@@ -49,34 +55,28 @@ func receiveFile(conn net.Conn, client string) error {
 		return err
 	}
 
-	received, err := copyBody(conn, file, header.Size, client)
+	received, err := io.Copy(file, io.LimitReader(source, int64(header.Size)))
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
 	}
 	if err == nil && received != int64(header.Size) {
 		err = fmt.Errorf("size mismatch: expected %d bytes, got %d", header.Size, received)
 	}
+	if err == nil {
+		saved, statErr := os.Stat(path)
+		if statErr != nil {
+			err = fmt.Errorf("stat saved file: %w", statErr)
+		} else if saved.Size() != int64(header.Size) {
+			err = fmt.Errorf("disk size mismatch: expected %d bytes, got %d", header.Size, saved.Size())
+		}
+	}
 	if err != nil {
 		if removeErr := os.Remove(path); removeErr != nil {
 			return errors.Join(err, fmt.Errorf("remove partial file: %w", removeErr))
 		}
 	}
+	if err == nil {
+		log.Printf("[%s] file %q received successfully; saved as %q", client, header.Name, path)
+	}
 	return err
-}
-
-func copyBody(conn net.Conn, dst io.Writer, size uint64, client string) (int64, error) {
-	meter := &Meter{}
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	defer func() {
-		close(stop)
-		<-done
-	}()
-	go func() {
-		defer close(done)
-		meter.Report(client, stop)
-	}()
-
-	body := io.TeeReader(io.LimitReader(conn, int64(size)), meter)
-	return io.Copy(dst, body)
 }

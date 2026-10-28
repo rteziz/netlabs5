@@ -8,6 +8,7 @@ mcdisc
 *.png
 *.iso
 *.jpg
+*.pdf
 # Тестовые файлы
 *.test
 CODE_WALKTHROUGH.md

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"filetransfer/protocol"
 	"fmt"
 	"io"
@@ -30,7 +32,7 @@ func run() {
 		fmt.Println("Transfer FAILED:", err)
 		os.Exit(1)
 	}
-	fmt.Println("Transfer successful")
+	fmt.Printf("Transfer successful: %q\n", filepath.Base(os.Args[pathArg]))
 }
 
 func sendFile(path, address string) error {
@@ -58,6 +60,10 @@ func sendFile(path, address string) error {
 		return err
 	}
 
+	before, err := hashFile(file)
+	if err != nil {
+		return err
+	}
 	conn, err := net.DialTimeout("tcp", address, protocol.ConnectTimeout)
 	if err != nil {
 		return err
@@ -69,10 +75,14 @@ func sendFile(path, address string) error {
 	}(conn)
 
 	conn = &protocol.IdleConn{Conn: conn, Timeout: protocol.IdleTimeout}
+	if err := waitForAdmission(conn); err != nil {
+		return err
+	}
 	if err := protocol.WriteHeader(conn, header); err != nil {
 		return err
 	}
-	if _, err := io.CopyN(conn, file, int64(header.Size)); err != nil {
+	sentHash := sha256.New()
+	if _, err := io.CopyN(io.MultiWriter(conn, sentHash), file, int64(header.Size)); err != nil {
 		return err
 	}
 	current, err := file.Stat()
@@ -82,6 +92,16 @@ func sendFile(path, address string) error {
 	if current.Size() != info.Size() {
 		return fmt.Errorf("file size changed during transfer: was %d, now %d", info.Size(), current.Size())
 	}
+	if !bytes.Equal(before, sentHash.Sum(nil)) {
+		return fmt.Errorf("file contents changed during transfer")
+	}
+	after, err := hashFile(file)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(before, after) {
+		return fmt.Errorf("file contents changed during transfer")
+	}
 	return waitForStatus(conn)
 }
 
@@ -90,8 +110,41 @@ func waitForStatus(conn net.Conn) error {
 	if _, err := io.ReadFull(conn, status); err != nil {
 		return fmt.Errorf("no answer from server: %w", err)
 	}
-	if status[0] != protocol.StatusOK {
-		return fmt.Errorf("server reported a failure")
+	switch status[0] {
+	case protocol.StatusOK:
+		return nil
+	case protocol.StatusFail:
+		return fmt.Errorf("server reported a failure while receiving the file (status %d); check server logs", status[0])
+	default:
+		return fmt.Errorf("unexpected final status %d; rebuild both client and server from the same sources", status[0])
 	}
-	return nil
+}
+
+func waitForAdmission(conn net.Conn) error {
+	var status [1]byte
+	if _, err := io.ReadFull(conn, status[:]); err != nil {
+		return fmt.Errorf("no admission response from server: %w", err)
+	}
+	switch status[0] {
+	case protocol.StatusReady:
+		return nil
+	case protocol.StatusBusy:
+		return fmt.Errorf("server is full: no free slots for receiving files; try again later")
+	default:
+		return fmt.Errorf("unexpected admission status: %d", status[0])
+	}
+}
+
+func hashFile(file *os.File) ([]byte, error) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, file); err != nil {
+		return nil, err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
 }

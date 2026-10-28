@@ -75,10 +75,22 @@ func run() {
 			}(conn, id)
 		default:
 			log.Printf("[%s] rejected: client limit (%d) reached", conn.RemoteAddr(), maxClients)
-			err := conn.Close()
-			if err != nil {
-				return
-			}
+			rejectClient(conn)
 		}
+	}
+}
+
+func rejectClient(conn net.Conn) {
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Printf("[%s] cannot close rejected connection: %v", conn.RemoteAddr(), err)
+		}
+	}()
+	if err := conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+		log.Printf("[%s] cannot set rejection deadline: %v", conn.RemoteAddr(), err)
+		return
+	}
+	if _, err := conn.Write([]byte{protocol.StatusBusy}); err != nil {
+		log.Printf("[%s] cannot send busy status: %v", conn.RemoteAddr(), err)
 	}
 }

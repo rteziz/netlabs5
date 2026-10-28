@@ -11,6 +11,7 @@ const ReportInterval = 3 * time.Second
 
 type Meter struct {
 	total atomic.Int64
+	start time.Time
 }
 
 func (m *Meter) Write(p []byte) (int, error) {
@@ -19,19 +20,25 @@ func (m *Meter) Write(p []byte) (int, error) {
 }
 
 func (m *Meter) Report(client string, stop <-chan struct{}) {
-	start := time.Now()
+	start := m.start
+	if start.IsZero() {
+		start = time.Now()
+	}
 	lastTime := start
 	var lastTotal int64
-	printed := false
 
-	printRates := func() {
+	printRates := func(final bool) {
 		now := time.Now()
 		total := m.total.Load()
-		log.Printf("[%s] instant: %s, average: %s",
-			client,
+		kind := "periodic"
+		if final {
+			kind = "final"
+		}
+		log.Printf("[%s] %s: instant: %s, average: %s",
+			client, kind,
 			formatRate(bytesPerSecond(total-lastTotal, now.Sub(lastTime))),
 			formatRate(bytesPerSecond(total, now.Sub(start))))
-		lastTime, lastTotal, printed = now, total, true
+		lastTime, lastTotal = now, total
 	}
 
 	ticker := time.NewTicker(ReportInterval)
@@ -39,11 +46,9 @@ func (m *Meter) Report(client string, stop <-chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
-			printRates()
+			printRates(false)
 		case <-stop:
-			if !printed {
-				printRates()
-			}
+			printRates(true)
 			return
 		}
 	}
@@ -67,4 +72,11 @@ func formatRate(rate float64) string {
 	default:
 		return fmt.Sprintf("%.2f B/s", rate)
 	}
+}
+
+func startMeter(client string) (*Meter, func()) {
+	m := &Meter{start: time.Now()}
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() { defer close(done); m.Report(client, stop) }()
+	return m, func() { close(stop); <-done }
 }
