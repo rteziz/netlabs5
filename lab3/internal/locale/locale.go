@@ -1,4 +1,3 @@
-// Package locale selects the application's Russian or English messages.
 package locale
 
 const (

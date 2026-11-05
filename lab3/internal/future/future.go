@@ -1,4 +1,3 @@
-// Package future provides callback-based futures. Only Await waits for a result.
 package future
 
 import (
@@ -49,7 +48,6 @@ func Ready[T any](value T, err error) *Future[T] {
 	return f
 }
 
-// Then passes the preceding result directly into the next asynchronous operation.
 func Then[A, B any](source *Future[A], next func(A) *Future[B]) *Future[B] {
 	result := New[B]()
 	source.subscribe(func(value A, err error) {
@@ -70,7 +68,6 @@ func Map[A, B any](source *Future[A], transform func(A) (B, error)) *Future[B] {
 	})
 }
 
-// All preserves input order without waiting on any individual future.
 func All[T any](inputs ...*Future[T]) *Future[[]T] {
 	result := New[[]T]()
 	values := make([]T, len(inputs))
@@ -100,7 +97,6 @@ func All[T any](inputs ...*Future[T]) *Future[[]T] {
 	return result
 }
 
-// Await is intended only for final results at the console boundary.
 func (f *Future[T]) Await(ctx context.Context) (T, error) {
 	type outcome struct {
 		value T
@@ -115,4 +111,8 @@ func (f *Future[T]) Await(ctx context.Context) (T, error) {
 		var zero T
 		return zero, ctx.Err()
 	}
+}
+
+func (f *Future[T]) OnComplete(callback func(T, error)) {
+	f.subscribe(callback)
 }

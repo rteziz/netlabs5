@@ -1,37 +1,36 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"places/internal/locale"
-	"places/internal/places"
-	"strconv"
+	"places/internal/webui"
 	"strings"
 	"time"
 )
 
 const (
-	defaultLanguage            = locale.Russian
-	defaultRadiusMeters        = 3000
-	minRadiusMeters            = 10
-	maxRadiusMeters            = 10000
-	defaultPlacesLimit         = 5
-	minPlacesLimit             = 1
-	maxPlacesLimit             = 10
-	searchTimeout              = 20 * time.Second
-	displayCoordinatePrecision = 5
-	exploreTimeout             = 35 * time.Second
-	freezingTemperatureCelsius = 0
+	defaultLanguage     = locale.Russian
+	defaultRadiusMeters = 3000
+	minRadiusMeters     = 10
+	maxRadiusMeters     = 10000
+	defaultPlacesLimit  = 5
+	minPlacesLimit      = 1
+	maxPlacesLimit      = 10
+	defaultAddress      = "127.0.0.1:8080"
+	headerTimeout       = 5 * time.Second
+	idleTimeout         = 60 * time.Second
+	shutdownTimeout     = 5 * time.Second
 )
 
 func run() (err error) {
-	// Choose help/error language before parsing, including `-lang en -h`.
 	uiLanguage := argumentLanguage(os.Args[1:])
 	tr := func(ru, en string) string { return locale.Text(uiLanguage, ru, en) }
 	defer func() {
@@ -51,6 +50,7 @@ func run() (err error) {
 	language := flags.String("lang", defaultLanguage, tr("язык интерфейса и API: ru или en", "interface and API language: ru or en"))
 	radius := flags.Int("radius", defaultRadiusMeters, fmt.Sprintf(tr("радиус поиска, %d–%d метров", "search radius, %d-%d meters"), minRadiusMeters, maxRadiusMeters))
 	limit := flags.Int("limit", defaultPlacesLimit, fmt.Sprintf(tr("количество мест, %d–%d", "number of places, %d-%d"), minPlacesLimit, maxPlacesLimit))
+	address := flags.String("addr", defaultAddress, tr("адрес веб-сервера", "web server address"))
 	if parseErr := flags.Parse(os.Args[1:]); parseErr != nil {
 		if errors.Is(parseErr, flag.ErrHelp) {
 			return nil
@@ -62,61 +62,26 @@ func run() (err error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Print(tr("Куда отправимся? Название города, улицы или места: ", "Where shall we go? Enter a city, street or place: "))
-	if !scanner.Scan() {
-		return scanner.Err()
+	listener, listenErr := net.Listen("tcp", *address)
+	if listenErr != nil {
+		return listenErr
 	}
-	service := places.New(*language, *radius, *limit)
-	searchCtx, cancelSearch := context.WithTimeout(ctx, searchTimeout)
-	locations, err := service.SearchLocations(searchCtx, scanner.Text()).Await(searchCtx)
-	cancelSearch()
-	if err != nil {
-		return err
-	}
-	if len(locations) == 0 {
-		fmt.Println(tr("Ничего не найдено. Попробуйте уточнить название и город.", "Nothing found. Try a more specific name and city."))
+	app := webui.New(ctx, webui.Options{Language: *language, Radius: *radius, Limit: *limit}, nil)
+	server := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: headerTimeout, IdleTimeout: idleTimeout}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+	fmt.Printf(tr("Откройте в браузере: http://%s\n", "Open in your browser: http://%s\n"), listener.Addr())
+	serveErr := server.Serve(listener)
+	if errors.Is(serveErr, http.ErrServerClosed) {
 		return nil
 	}
-	for i, location := range locations {
-		fmt.Printf("%d. %s (%.*f, %.*f)\n", i+1, location.Name, displayCoordinatePrecision, location.Latitude, displayCoordinatePrecision, location.Longitude)
-	}
-	var choice int
-	for {
-		fmt.Print(tr("Номер локации: ", "Location number: "))
-		if !scanner.Scan() {
-			return scanner.Err()
-		}
-		choice, err = strconv.Atoi(strings.TrimSpace(scanner.Text()))
-		if err == nil && choice >= 1 && choice <= len(locations) {
-			break
-		}
-		fmt.Printf(tr("Введите целое число от 1 до %d.\n", "Enter an integer from 1 to %d.\n"), len(locations))
-	}
-	exploreCtx, cancelExplore := context.WithTimeout(ctx, exploreTimeout)
-	defer cancelExplore()
-	result, err := service.Explore(exploreCtx, locations[choice-1]).Await(exploreCtx)
-	if err != nil {
-		return err
-	}
-	// Render only after the complete aggregate is available.
-	var out strings.Builder
-	fmt.Fprintf(&out, tr("\n%s\nПогода на %s (местное время): %.1f °C, ощущается как %.1f °C, ветер %.1f км/ч.\n", "\n%s\nWeather at %s (local time): %.1f °C, feels like %.1f °C, wind %.1f km/h.\n"), result.Location.Name, result.Weather.Time, result.Weather.Temperature, result.Weather.FeelsLike, result.Weather.Wind)
-	if result.Weather.Temperature < freezingTemperatureCelsius {
-		fmt.Fprintln(&out, tr("Режим пельменя в морозилке: одевайтесь теплее.", "Frozen dumpling mode: dress warmly."))
-	}
-	if len(result.Places) == 0 {
-		fmt.Fprintln(&out, tr("Рядом нет статей с координатами. Попробуйте увеличить -radius или сменить -lang.", "No geotagged articles nearby. Try increasing -radius or changing -lang."))
-	}
-	for i, place := range result.Places {
-		fmt.Fprintf(&out, tr("\n%d. %s — %.0f м\n%s\n%s\n", "\n%d. %s — %.0f m\n%s\n%s\n"), i+1, place.Title, place.Distance, place.Description, place.URL)
-	}
-	fmt.Fprintln(&out, tr("\nИсточники: Photon / © OpenStreetMap contributors; Open-Meteo (CC BY 4.0); Wikipedia (лицензия указана в статьях).", "\nSources: Photon / © OpenStreetMap contributors; Open-Meteo (CC BY 4.0); Wikipedia (see articles for licensing)."))
-	fmt.Print(out.String())
-	return nil
+	return serveErr
 }
 
-// argumentLanguage also supports Go flag syntax --lang=en and -lang=en.
 func argumentLanguage(args []string) string {
 	language := defaultLanguage
 	for i := 0; i < len(args); i++ {
@@ -127,7 +92,7 @@ func argumentLanguage(args []string) string {
 		name := strings.TrimPrefix(strings.TrimPrefix(arg, "-"), "-")
 		key, value, hasValue := strings.Cut(name, "=")
 		switch key {
-		case "lang", "radius", "limit":
+		case "lang", "radius", "limit", "addr":
 			if !hasValue && i+1 < len(args) {
 				i++
 				value = args[i]
