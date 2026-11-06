@@ -1,4 +1,3 @@
-# Бинарники
 *.exe
 *.exe~
 *.dll
@@ -9,23 +8,13 @@ mcdisc
 *.iso
 *.jpg
 *.pdf
-# Тестовые файлы
 *.test
 CODE_WALKTHROUGH.md
-# Профилировка
 *.prof
-
-# Кеш и модули (опционально)
 /vendor/
-
-# IDE
 .idea/
 .vscode/
 *.swp
-
-# ОС
 .DS_Store
 Thumbs.db
-
-# Переменные окружения
 .env

@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/jzx17/gofetch"
+	"github.com/jzx17/gofetch/core"
 )
 
 const (
@@ -24,45 +27,65 @@ const (
 
 var requestSequence atomic.Uint64
 
-type Client struct{ HTTP *http.Client }
+type Client struct{ transport *gofetch.Client }
+
+func New(timeout time.Duration) *Client {
+	return &Client{transport: gofetch.NewClient(
+		gofetch.WithTimeout(timeout),
+		gofetch.WithAutoBufferResponse(true),
+		gofetch.WithSizeConfig(gofetch.SizeConfig{MaxResponseBodySize: maxResponseBytes}),
+	)}
+}
 
 func GetJSON[T any](ctx context.Context, client *Client, endpoint string) *future.Future[T] {
 	result := future.New[T]()
+	requestURL, err := url.ParseRequestURI(endpoint)
+	if err != nil || (requestURL.Scheme != "http" && requestURL.Scheme != "https") || requestURL.Host == "" {
+		var zero T
+		result.Resolve(zero, errors.New("invalid HTTP endpoint"))
+		return result
+	}
+	id := requestSequence.Add(1)
+	started := time.Now()
+	safeURL, redact := logURL(requestURL)
+	log.Printf("[API #%d] GET %s", id, safeURL)
+	responses := client.transport.GetAsync(ctx, endpoint, map[string]string{
+		"User-Agent": userAgent, "Accept": jsonContentType,
+	})
 	go func() {
 		var value T
+		completion, ok := <-responses
 		err := func() error {
-			request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-			if err != nil {
-				return err
+			if !ok {
+				return errors.New("HTTP client closed without a result")
 			}
-			id := requestSequence.Add(1)
-			started := time.Now()
-			safeURL, redact := logURL(request.URL)
-			log.Printf("[API #%d] GET %s", id, safeURL)
-			request.Header.Set("User-Agent", userAgent)
-			request.Header.Set("Accept", jsonContentType)
-			response, err := client.HTTP.Do(request)
-			if err != nil {
-				log.Printf("[API #%d] FAILED after %s: %s", id, time.Since(started).Round(time.Millisecond), redact(sanitizeError(err).Error()))
-				return fmt.Errorf("%s: request failed: %w", request.URL.Host, sanitizeError(err))
+			if completion.Error != nil {
+				err := sanitizeError(completion.Error)
+				log.Printf("[API #%d] FAILED after %s: %s", id, time.Since(started).Round(time.Millisecond), redact(err.Error()))
+				return fmt.Errorf("%s: request failed: %w", requestURL.Host, err)
 			}
-			defer func(Body io.ReadCloser) {
-				err := Body.Close()
+			response := completion.Response
+			if response == nil {
+				return errors.New("HTTP client returned no response")
+			}
+			defer func(response *core.Response) {
+				err := response.CloseBody()
 				if err != nil {
+
 				}
-			}(response.Body)
+			}(response)
 			body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 			bodyLog := redact(string(body))
 			if len(bodyLog) > maxLogBodyBytes {
 				bodyLog = bodyLog[:maxLogBodyBytes] + " ... [truncated]"
 			}
-			log.Printf("[API #%d] %s HTTP %d in %s; body=%q", id, request.URL.Host, response.StatusCode, time.Since(started).Round(time.Millisecond), bodyLog)
+			log.Printf("[API #%d] %s HTTP %d in %s; body=%q", id, requestURL.Host, response.StatusCode, time.Since(started).Round(time.Millisecond), bodyLog)
 			if err != nil {
 				log.Printf("[API #%d] READ FAILED: %s", id, redact(err.Error()))
 				return err
 			}
 			if response.StatusCode != http.StatusOK {
-				return fmt.Errorf("%s: HTTP %d", request.URL.Host, response.StatusCode)
+				return fmt.Errorf("%s: HTTP %d", requestURL.Host, response.StatusCode)
 			}
 			if len(body) > maxResponseBytes {
 				log.Printf("[API #%d] RESPONSE TOO LARGE", id)
@@ -70,7 +93,7 @@ func GetJSON[T any](ctx context.Context, client *Client, endpoint string) *futur
 			}
 			if err := json.Unmarshal(body, &value); err != nil {
 				log.Printf("[API #%d] INVALID JSON: %s", id, redact(err.Error()))
-				return fmt.Errorf("%s: invalid JSON: %w", request.URL.Host, err)
+				return fmt.Errorf("%s: invalid JSON: %w", requestURL.Host, err)
 			}
 			return nil
 		}()

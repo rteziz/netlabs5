@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
 	"places/internal/asynchttp"
@@ -84,7 +83,7 @@ func New(language string, radius, limit int) *Service {
 		OpenTripMapKey: strings.TrimSpace(os.Getenv("OPENTRIPMAP_API_KEY")),
 		TripURL:        fmt.Sprintf(tripURLFormat, language),
 		GraphHopperKey: strings.TrimSpace(os.Getenv("GRAPHHOPPER_API_KEY")),
-		Client:         &asynchttp.Client{HTTP: &http.Client{Timeout: httpTimeout}},
+		Client:         asynchttp.New(httpTimeout),
 		GeocodeURL:     geocodeURL, WeatherURL: weatherURL,
 		WikiURL: fmt.Sprintf(wikiURLFormat, language), Radius: radius, Limit: limit,
 	}
