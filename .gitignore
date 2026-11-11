@@ -10,6 +10,7 @@ mcdisc
 *.pdf
 *.test
 CODE_WALKTHROUGH.md
+WORKFLOW.md
 *.prof
 /vendor/
 .idea/

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/jzx17/gofetch"
-	"github.com/jzx17/gofetch/core"
 )
 
 const (
@@ -52,6 +51,7 @@ func GetJSON[T any](ctx context.Context, client *Client, endpoint string) *futur
 	responses := client.transport.GetAsync(ctx, endpoint, map[string]string{
 		"User-Agent": userAgent, "Accept": jsonContentType,
 	})
+	// Ответ из канала ждёт отдельная горутина. Вызывающая функция сразу получает Future.
 	go func() {
 		var value T
 		completion, ok := <-responses
@@ -68,12 +68,7 @@ func GetJSON[T any](ctx context.Context, client *Client, endpoint string) *futur
 			if response == nil {
 				return errors.New("HTTP client returned no response")
 			}
-			defer func(response *core.Response) {
-				err := response.CloseBody()
-				if err != nil {
-
-				}
-			}(response)
+			defer response.CloseBody()
 			body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 			bodyLog := redact(string(body))
 			if len(bodyLog) > maxLogBodyBytes {

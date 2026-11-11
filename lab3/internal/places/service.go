@@ -108,12 +108,14 @@ func (s *Service) SearchLocations(ctx context.Context, query string) *future.Fut
 	if strings.TrimSpace(query) == "" {
 		return future.Ready[[]Location](nil, errors.New(locale.Text(s.Language, "пустой поисковый запрос", "empty search query")))
 	}
+	// При фильтрации просим больше кандидатов: часть ответов будет отброшена по OSMValue.
 	limit := locationLimit
 	if s.PlaceType != "" {
 		limit = filteredLocationLimit
 	}
 	params := url.Values{"q": {query}, "limit": {strconv.Itoa(limit)}, "locale": {s.Language}, "key": {s.GraphHopperKey}}
-	return future.Map(asynchttp.GetJSON[response](ctx, s.Client, endpoint(s.GeocodeURL, params)), func(data response) ([]Location, error) {
+	request := asynchttp.GetJSON[response](ctx, s.Client, endpoint(s.GeocodeURL, params))
+	return future.Map(request, func(data response) ([]Location, error) {
 		locations := make([]Location, 0, len(data.Hits))
 		for _, feature := range data.Hits {
 			if s.PlaceType != "" && feature.OSMValue != s.PlaceType {
@@ -178,10 +180,13 @@ func (s *Service) Explore(ctx context.Context, location Location) *future.Future
 			Humidity    float64 `json:"relative_humidity_2m"`
 		} `json:"current"`
 	}
-	weather := future.Map(asynchttp.GetJSON[weatherResponse](ctx, s.Client, endpoint(s.WeatherURL, url.Values{
+	// Погода и поиск мест зависят только от координат и запускаются независимо.
+	weatherParams := url.Values{
 		"latitude": {number(location.Latitude)}, "longitude": {number(location.Longitude)},
 		"current": {currentWeatherFields}, "timezone": {"auto"}, "wind_speed_unit": {"ms"},
-	})), func(data weatherResponse) (Result, error) {
+	}
+	weatherRequest := asynchttp.GetJSON[weatherResponse](ctx, s.Client, endpoint(s.WeatherURL, weatherParams))
+	weather := future.Map(weatherRequest, func(data weatherResponse) (Result, error) {
 		if data.Current == nil {
 			return Result{}, errors.New(locale.Text(s.Language, "API погоды не вернул текущие условия", "weather API did not return current conditions"))
 		}
@@ -190,7 +195,13 @@ func (s *Service) Explore(ctx context.Context, location Location) *future.Future
 	})
 	nearby := s.nearby(ctx, location)
 	return future.Map(future.All(weather, nearby), func(parts []Result) (Result, error) {
-		return Result{Location: location, Weather: parts[weatherResultIndex].Weather, Places: namedPlaces(parts[placesResultIndex].Places), PlacesSource: parts[placesResultIndex].PlacesSource}, nil
+		places := parts[placesResultIndex]
+		return Result{
+			Location:     location,
+			Weather:      parts[weatherResultIndex].Weather,
+			Places:       namedPlaces(places.Places),
+			PlacesSource: places.PlacesSource,
+		}, nil
 	})
 }
 
@@ -204,15 +215,25 @@ func (s *Service) tripPlaces(ctx context.Context, location Location) *future.Fut
 		"radius": {strconv.Itoa(s.Radius)}, "limit": {strconv.Itoa(s.Limit)},
 		"format": {"json"}, "apikey": {s.OpenTripMapKey},
 	}))
+	// Список xid нужен до запуска параллельных запросов карточек.
 	return future.Then(nearby, func(items []nearbyPlace) *future.Future[[]Place] {
 		requests := make([]*future.Future[Place], 0, len(items))
 		for _, item := range items {
 			place := Place{Title: item.Name, Distance: item.Distance, Description: locale.Text(s.Language, "Статья в Wikipedia отсутствует.", "No Wikipedia article available.")}
-			type detail struct{ Name, Wikipedia string }
+			type detail struct {
+				Name, Wikipedia string
+				Info            struct{ Descr string } `json:"info"`
+				Extracts        struct{ Text string }  `json:"wikipedia_extracts"`
+			}
 			details := asynchttp.GetJSON[detail](ctx, s.Client, endpoint(s.TripURL+"/xid/"+url.PathEscape(item.XID), url.Values{"apikey": {s.OpenTripMapKey}}))
-			requests = append(requests, future.Then(details, func(data detail) *future.Future[Place] {
+			card := future.Then(details, func(data detail) *future.Future[Place] {
 				if strings.TrimSpace(data.Name) != "" {
 					place.Title = data.Name
+				}
+				if text := strings.TrimSpace(data.Info.Descr); text != "" {
+					place.Description = text
+				} else if text := strings.TrimSpace(data.Extracts.Text); text != "" {
+					place.Description = text
 				}
 				article, err := url.Parse(data.Wikipedia)
 				if err != nil || article.Scheme != "https" || !strings.HasSuffix(article.Hostname(), ".wikipedia.org") || article.Port() != "" || article.User != nil || !strings.HasPrefix(article.Path, "/wiki/") {
@@ -232,7 +253,7 @@ func (s *Service) tripPlaces(ctx context.Context, location Location) *future.Fut
 					if len(description.Query.Pages) > 0 {
 						page := description.Query.Pages[0]
 						if !page.Missing {
-							if page.Extract != "" {
+							if strings.TrimSpace(page.Extract) != "" {
 								place.Description = page.Extract
 							}
 							place.ImageURL = page.Thumbnail.Source
@@ -245,7 +266,8 @@ func (s *Service) tripPlaces(ctx context.Context, location Location) *future.Fut
 					}
 					return place, nil
 				})
-			}))
+			})
+			requests = append(requests, keepPartialPlace(card, &place))
 		}
 		return future.All(requests...)
 	})
@@ -262,6 +284,7 @@ func (s *Service) nearby(ctx context.Context, location Location) *future.Future[
 		return wiki("Wikipedia (OpenTripMap fallback)")
 	}
 	result := future.New[Result]()
+	// Запасной поиск в Википедии использует общий ctx после истечения срока OpenTripMap.
 	tripCtx, cancel := context.WithTimeout(ctx, tripTimeout)
 	s.tripPlaces(tripCtx, location).OnComplete(func(items []Place, err error) {
 		cancel()
@@ -286,10 +309,10 @@ func (s *Service) wikiPlaces(ctx context.Context, location Location) *future.Fut
 		for _, item := range data.Query.Geosearch {
 			place := Place{Title: item.Title, Distance: item.Distance, URL: strings.TrimSuffix(s.WikiURL, wikiAPIPath) + "/?curid=" + strconv.Itoa(item.PageID), Description: locale.Text(s.Language, "Описание отсутствует.", "No description available.")}
 			request := s.wiki(ctx, s.WikiURL, url.Values{"prop": {"extracts|pageimages"}, "pageids": {strconv.Itoa(item.PageID)}, "piprop": {"thumbnail|name"}, "pithumbsize": {strconv.Itoa(thumbnailSize)}, "pilicense": {"free"}, "exintro": {apiEnabled}, "explaintext": {apiEnabled}, "exchars": {strconv.Itoa(descriptionMaxChars)}})
-			requests = append(requests, future.Map(request, func(data wikiResponse) (Place, error) {
+			card := future.Map(request, func(data wikiResponse) (Place, error) {
 				if len(data.Query.Pages) > 0 {
 					page := data.Query.Pages[0]
-					if page.Extract != "" {
+					if strings.TrimSpace(page.Extract) != "" {
 						place.Description = page.Extract
 					}
 					place.ImageURL = page.Thumbnail.Source
@@ -298,10 +321,23 @@ func (s *Service) wikiPlaces(ctx context.Context, location Location) *future.Fut
 					}
 				}
 				return place, nil
-			}))
+			})
+			requests = append(requests, keepPartialPlace(card, &place))
 		}
 		return future.All(requests...)
 	})
+}
+
+func keepPartialPlace(card *future.Future[Place], partial *Place) *future.Future[Place] {
+	result := future.New[Place]()
+	card.OnComplete(func(value Place, err error) {
+		if err != nil {
+			log.Printf("[API] incomplete place %q: %v", partial.Title, err)
+			value = *partial
+		}
+		result.Resolve(value, nil)
+	})
+	return result
 }
 
 func namedPlaces(items []Place) []Place {

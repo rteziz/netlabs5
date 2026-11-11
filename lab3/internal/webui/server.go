@@ -1,4 +1,3 @@
-// Package webui serves the local UI and non-blocking asynchronous job endpoints.
 package webui
 
 import (
@@ -103,7 +102,10 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 func valid(o Options) bool {
-	return places.ValidPlaceType(o.PlaceType) && (o.Language == "ru" || o.Language == "en") && o.Radius >= minRadius && o.Radius <= maxRadius && o.Limit >= minLimit && o.Limit <= maxLimit
+	languageOK := o.Language == "ru" || o.Language == "en"
+	radiusOK := o.Radius >= minRadius && o.Radius <= maxRadius
+	limitOK := o.Limit >= minLimit && o.Limit <= maxLimit
+	return languageOK && radiusOK && limitOK && places.ValidPlaceType(o.PlaceType)
 }
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -150,7 +152,10 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	}
 	service := s.factory(input.Language, input.Radius, input.Limit, input.PlaceType)
 	stop := context.AfterFunc(ctx, func() { s.finish(id, nil, ctx.Err()) })
-	complete := func(value any, err error) { stop(); s.finish(id, value, err) }
+	complete := func(value any, err error) {
+		stop()
+		s.finish(id, value, err)
+	}
 	if search {
 		service.SearchLocations(ctx, input.Query).OnComplete(func(value []places.Location, err error) { complete(value, err) })
 	} else {
@@ -176,6 +181,7 @@ func (s *Server) create(timeout time.Duration) (string, context.Context, error) 
 	if len(s.jobs) >= maxJobs {
 		return "", nil, errors.New("job limit reached")
 	}
+	// Задача продолжает работу после завершения POST, поэтому наследует контекст сервера.
 	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	s.jobs[id] = &job{Status: "pending", cancel: cancel, expires: now.Add(jobRetention)}
 	return id, ctx, nil
@@ -234,6 +240,7 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// Снимаем копию под мьютексом, чтобы запись HTTP-ответа не задерживала другие задачи.
 	snapshot := *j
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, snapshot)

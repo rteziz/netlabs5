@@ -50,3 +50,16 @@ footer{font-size:11px;color:var(--muted);margin:36px 0 24px;line-height:2}footer
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 #report:focus{outline:none}
 @media(max-width:640px){.topbar{padding:20px 16px}main{padding:0 16px;margin-top:16px}.language>span{display:none}.header-controls{gap:8px}.search-panel{padding:20px}.search-row{flex-wrap:wrap;gap:8px}#query{font-size:16px}.primary{width:100%}.type-row input{width:100%}.options{gap:12px}.location-list,.places-grid{grid-template-columns:1fr}.weather{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.weather>div:first-child{grid-column:1/-1}.report-header h2{font-size:23px}}
+
+#place-type {
+  color: #20212b;
+  background-color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+#place-type::placeholder {
+  color: #686975;
+  font-weight: 400;
+  opacity: 1;
+}

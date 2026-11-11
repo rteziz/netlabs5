@@ -31,6 +31,7 @@ const (
 )
 
 func run() (err error) {
+	// Язык нужен до разбора флагов, чтобы локализовать справку и ошибки запуска.
 	uiLanguage := argumentLanguage(os.Args[1:])
 	tr := func(ru, en string) string { return locale.Text(uiLanguage, ru, en) }
 	defer func() {

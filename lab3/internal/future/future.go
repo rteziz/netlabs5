@@ -5,6 +5,7 @@ import (
 	"sync"
 )
 
+// Future хранит результат операции и функции, ожидающие её завершения.
 type Future[T any] struct {
 	mu        sync.Mutex
 	done      bool
@@ -22,6 +23,7 @@ func (f *Future[T]) Resolve(value T, err error) {
 		return
 	}
 	f.done, f.value, f.err = true, value, err
+	// Вызываем подписчиков после снятия блокировки: они могут подписаться снова.
 	callbacks := f.callbacks
 	f.callbacks = nil
 	f.mu.Unlock()
@@ -56,6 +58,7 @@ func Then[A, B any](source *Future[A], next func(A) *Future[B]) *Future[B] {
 			result.Resolve(zero, err)
 			return
 		}
+		// Результат следующего шага завершит всю цепочку.
 		next(value).subscribe(result.Resolve)
 	})
 	return result
@@ -85,6 +88,7 @@ func All[T any](inputs ...*Future[T]) *Future[[]T] {
 				return
 			}
 			mu.Lock()
+			// Порядок результатов определяется порядком входов, даже если ответы пришли иначе.
 			values[index] = value
 			remaining--
 			done := remaining == 0
@@ -102,6 +106,7 @@ func (f *Future[T]) Await(ctx context.Context) (T, error) {
 		value T
 		err   error
 	}
+	// Буфер принимает ответ и после выхода из Await по отмене контекста.
 	ready := make(chan outcome, 1)
 	f.subscribe(func(value T, err error) { ready <- outcome{value, err} })
 	select {
