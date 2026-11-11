@@ -68,6 +68,7 @@ type Server struct {
 	jobs     map[string]*job
 }
 
+// New создаёт веб-сервер с настройками и таблицей задач.
 func New(ctx context.Context, defaults Options, factory Factory) *Server {
 	if factory == nil {
 		factory = func(lang string, radius, limit int, placeType string) Service {
@@ -78,6 +79,8 @@ func New(ctx context.Context, defaults Options, factory Factory) *Server {
 	}
 	return &Server{ctx: ctx, defaults: defaults, factory: factory, jobs: make(map[string]*job)}
 }
+
+// Handler связывает маршруты API и файлы сайта с HTTP-обработчиками.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
@@ -101,12 +104,16 @@ func (s *Server) Handler() http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+
+// valid проверяет язык, тип места, радиус и лимит.
 func valid(o Options) bool {
 	languageOK := o.Language == "ru" || o.Language == "en"
 	radiusOK := o.Radius >= minRadius && o.Radius <= maxRadius
 	limitOK := o.Limit >= minLimit && o.Limit <= maxLimit
 	return languageOK && radiusOK && limitOK && places.ValidPlaceType(o.PlaceType)
 }
+
+// start запускает поиск или сбор отчёта и возвращает браузеру id задачи.
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		fail(w, http.StatusMethodNotAllowed, "method_not_allowed")
@@ -163,6 +170,8 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
 }
+
+// create регистрирует задачу и задаёт срок её выполнения.
 func (s *Server) create(timeout time.Duration) (string, context.Context, error) {
 	var token [tokenBytes]byte
 	if _, err := rand.Read(token[:]); err != nil {
@@ -186,6 +195,8 @@ func (s *Server) create(timeout time.Duration) (string, context.Context, error) 
 	s.jobs[id] = &job{Status: "pending", cancel: cancel, expires: now.Add(jobRetention)}
 	return id, ctx, nil
 }
+
+// finish сохраняет результат или ошибку и завершает задачу.
 func (s *Server) finish(id string, value any, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -213,6 +224,8 @@ func (s *Server) finish(id string, value any, err error) {
 	}
 	j.cancel()
 }
+
+// poll возвращает состояние задачи по GET или удаляет её по DELETE.
 func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodDelete {
 		fail(w, http.StatusMethodNotAllowed, "method_not_allowed")
@@ -245,9 +258,13 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, snapshot)
 }
+
+// fail отправляет код ошибки в формате JSON.
 func fail(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
+
+// writeJSON записывает HTTP-статус и JSON в ответ клиенту.
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")

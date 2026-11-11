@@ -77,6 +77,7 @@ type Service struct {
 	Radius, Limit                   int
 }
 
+// New настраивает клиент внешних API для выбранного языка и параметров поиска.
 func New(language string, radius, limit int) *Service {
 	return &Service{
 		Language:       language,
@@ -88,11 +89,16 @@ func New(language string, radius, limit int) *Service {
 		WikiURL: fmt.Sprintf(wikiURLFormat, language), Radius: radius, Limit: limit,
 	}
 }
+
+// endpoint добавляет к адресу API закодированные параметры запроса.
 func endpoint(base string, params url.Values) string { return base + "?" + params.Encode() }
+
+// number форматирует координату для передачи в URL.
 func number(value float64) string {
 	return strconv.FormatFloat(value, 'f', coordinatePrecision, coordinateFloatBits)
 }
 
+// SearchLocations ищет адреса в GraphHopper и отбирает подходящие по типу места.
 func (s *Service) SearchLocations(ctx context.Context, query string) *future.Future[[]Location] {
 	type response struct {
 		Hits []struct {
@@ -157,6 +163,7 @@ type wikiResponse struct {
 	} `json:"query"`
 }
 
+// wiki отправляет запрос MediaWiki и проверяет ошибку внутри JSON.
 func (s *Service) wiki(ctx context.Context, base string, params url.Values) *future.Future[wikiResponse] {
 	params.Set("action", "query")
 	params.Set("format", "json")
@@ -169,6 +176,7 @@ func (s *Service) wiki(ctx context.Context, base string, params url.Values) *fut
 	})
 }
 
+// Explore параллельно получает погоду и места рядом и собирает отчёт.
 func (s *Service) Explore(ctx context.Context, location Location) *future.Future[Result] {
 	type weatherResponse struct {
 		Current *struct {
@@ -205,6 +213,7 @@ func (s *Service) Explore(ctx context.Context, location Location) *future.Future
 	})
 }
 
+// tripPlaces находит объекты OpenTripMap и дополняет их карточки описаниями.
 func (s *Service) tripPlaces(ctx context.Context, location Location) *future.Future[[]Place] {
 	type nearbyPlace struct {
 		XID, Name string
@@ -273,6 +282,7 @@ func (s *Service) tripPlaces(ctx context.Context, location Location) *future.Fut
 	})
 }
 
+// nearby выбирает источник мест и при необходимости переходит на Википедию.
 func (s *Service) nearby(ctx context.Context, location Location) *future.Future[Result] {
 	wiki := func(source string) *future.Future[Result] {
 		return future.Map(s.wikiPlaces(ctx, location), func(items []Place) (Result, error) { return Result{Places: items, PlacesSource: source}, nil })
@@ -302,6 +312,7 @@ func (s *Service) nearby(ctx context.Context, location Location) *future.Future[
 	return result
 }
 
+// wikiPlaces ищет статьи вокруг точки и загружает их описания.
 func (s *Service) wikiPlaces(ctx context.Context, location Location) *future.Future[[]Place] {
 	nearby := s.wiki(ctx, s.WikiURL, url.Values{"list": {"geosearch"}, "gscoord": {number(location.Latitude) + "|" + number(location.Longitude)}, "gsradius": {strconv.Itoa(s.Radius)}, "gslimit": {strconv.Itoa(s.Limit)}})
 	return future.Then(nearby, func(data wikiResponse) *future.Future[[]Place] {
@@ -328,6 +339,7 @@ func (s *Service) wikiPlaces(ctx context.Context, location Location) *future.Fut
 	})
 }
 
+// keepPartialPlace сохраняет доступные данные места при ошибке загрузки подробностей.
 func keepPartialPlace(card *future.Future[Place], partial *Place) *future.Future[Place] {
 	result := future.New[Place]()
 	card.OnComplete(func(value Place, err error) {
@@ -340,6 +352,7 @@ func keepPartialPlace(card *future.Future[Place], partial *Place) *future.Future
 	return result
 }
 
+// namedPlaces оставляет места с непустым названием.
 func namedPlaces(items []Place) []Place {
 	result := make([]Place, 0, len(items))
 	for _, item := range items {

@@ -28,6 +28,7 @@ var requestSequence atomic.Uint64
 
 type Client struct{ transport *gofetch.Client }
 
+// New создаёт HTTP-клиент с тайм-аутом и ограничением размера ответа.
 func New(timeout time.Duration) *Client {
 	return &Client{transport: gofetch.NewClient(
 		gofetch.WithTimeout(timeout),
@@ -36,6 +37,7 @@ func New(timeout time.Duration) *Client {
 	)}
 }
 
+// GetJSON асинхронно загружает JSON и возвращает Future с разобранным ответом.
 func GetJSON[T any](ctx context.Context, client *Client, endpoint string) *future.Future[T] {
 	result := future.New[T]()
 	requestURL, err := url.ParseRequestURI(endpoint)
@@ -97,6 +99,7 @@ func GetJSON[T any](ctx context.Context, client *Client, endpoint string) *futur
 	return result
 }
 
+// sanitizeError извлекает причину сетевой ошибки, исключая URL из сообщения.
 func sanitizeError(err error) error {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
@@ -105,6 +108,7 @@ func sanitizeError(err error) error {
 	return err
 }
 
+// logURL маскирует ключи в адресе и готовит функцию очистки текста для журнала.
 func logURL(source *url.URL) (string, func(string) string) {
 	safe := *source
 	query := safe.Query()

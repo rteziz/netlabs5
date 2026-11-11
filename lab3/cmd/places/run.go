@@ -30,6 +30,7 @@ const (
 	shutdownTimeout     = 5 * time.Second
 )
 
+// run читает параметры запуска и обслуживает HTTP-запросы до остановки сервера.
 func run() (err error) {
 	// Язык нужен до разбора флагов, чтобы локализовать справку и ошибки запуска.
 	uiLanguage := argumentLanguage(os.Args[1:])
@@ -83,6 +84,7 @@ func run() (err error) {
 	return serveErr
 }
 
+// argumentLanguage определяет язык аргументов до формирования справки.
 func argumentLanguage(args []string) string {
 	language := defaultLanguage
 	for i := 0; i < len(args); i++ {

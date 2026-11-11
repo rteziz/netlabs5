@@ -14,8 +14,10 @@ type Future[T any] struct {
 	callbacks []func(T, error)
 }
 
+// New создаёт незавершённый Future.
 func New[T any]() *Future[T] { return &Future[T]{} }
 
+// Resolve сохраняет первый итог операции и уведомляет подписчиков.
 func (f *Future[T]) Resolve(value T, err error) {
 	f.mu.Lock()
 	if f.done {
@@ -32,6 +34,7 @@ func (f *Future[T]) Resolve(value T, err error) {
 	}
 }
 
+// subscribe вызывает обработчик сразу или сохраняет его до завершения операции.
 func (f *Future[T]) subscribe(callback func(T, error)) {
 	f.mu.Lock()
 	if !f.done {
@@ -44,12 +47,14 @@ func (f *Future[T]) subscribe(callback func(T, error)) {
 	callback(value, err)
 }
 
+// Ready возвращает Future с уже известным значением или ошибкой.
 func Ready[T any](value T, err error) *Future[T] {
 	f := New[T]()
 	f.Resolve(value, err)
 	return f
 }
 
+// Then передаёт успешный результат в следующий асинхронный шаг.
 func Then[A, B any](source *Future[A], next func(A) *Future[B]) *Future[B] {
 	result := New[B]()
 	source.subscribe(func(value A, err error) {
@@ -64,6 +69,7 @@ func Then[A, B any](source *Future[A], next func(A) *Future[B]) *Future[B] {
 	return result
 }
 
+// Map преобразует успешный результат и возвращает новый Future.
 func Map[A, B any](source *Future[A], transform func(A) (B, error)) *Future[B] {
 	return Then(source, func(value A) *Future[B] {
 		mapped, err := transform(value)
@@ -71,6 +77,7 @@ func Map[A, B any](source *Future[A], transform func(A) (B, error)) *Future[B] {
 	})
 }
 
+// All собирает результаты в исходном порядке или передаёт первую ошибку.
 func All[T any](inputs ...*Future[T]) *Future[[]T] {
 	result := New[[]T]()
 	values := make([]T, len(inputs))
@@ -101,6 +108,7 @@ func All[T any](inputs ...*Future[T]) *Future[[]T] {
 	return result
 }
 
+// Await ждёт результата или отмены переданного контекста.
 func (f *Future[T]) Await(ctx context.Context) (T, error) {
 	type outcome struct {
 		value T
@@ -118,6 +126,7 @@ func (f *Future[T]) Await(ctx context.Context) (T, error) {
 	}
 }
 
+// OnComplete подписывает обработчик на завершение операции.
 func (f *Future[T]) OnComplete(callback func(T, error)) {
 	f.subscribe(callback)
 }

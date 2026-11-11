@@ -11,9 +11,11 @@
     const toggle = document.getElementById('motion-toggle');
     let symbols = [], width = 0, height = 0, columns = 0, rows = 0;
     let frame = 0, lastStep = performance.now(), paused = reducedMotion.matches;
+    // Выбирает случайное смещение в клетках.
     const randomStep = () => Math.floor(Math.random() * (maxStep * 2 + 1)) - maxStep;
+    // Ограничивает координату границами сетки.
     const clamp = (value, max) => Math.max(0, Math.min(max - 1, value));
-    // Между шагами плавно меняем координаты и угол каждого символа.
+    // Рисует фигуры с учётом текущего положения и угла.
     function paint(now) {
         ctx.clearRect(0, 0, width, height);
         const progress = paused ? 1 : Math.min(1, Math.max(0, (now - lastStep) / moveDuration));
@@ -109,6 +111,7 @@
             ctx.restore();
         }
     }
+    // Обновляет движение фигур и планирует следующий кадр.
     function tick(now) {
         if (now - lastStep >= stepInterval) {
             for (const symbol of symbols) {
@@ -128,6 +131,7 @@
         paint(now);
         frame = requestAnimationFrame(tick);
     }
+    // Согласует анимацию с паузой и видимостью страницы.
     function sync() {
         cancelAnimationFrame(frame);
         toggle.dataset.i18n = paused ? 'resumeMotion' : 'pauseMotion';
@@ -141,6 +145,7 @@
         else
             paint(lastStep + moveDuration);
     }
+    // Перестраивает сетку фигур под размер окна.
     function resize() {
         width = window.innerWidth;
         height = window.innerHeight;

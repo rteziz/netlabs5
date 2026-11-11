@@ -43,10 +43,11 @@ const russianTypes = new Map([
     ['church', 'Церковь'],
 ]);
 let availableTypes = [];
+// Возвращает подпись типа места для текущего языка.
 function typeLabel(code) {
     return language === 'ru' ? russianTypes.get(code) || code : code;
 }
-// Преобразуем видимую пользователю подпись в OSM-код для запроса.
+// Переводит введённое название типа в OSM-код.
 function typeCode(value) {
     const input = value.trim().toLowerCase();
     for (const [code, label] of russianTypes) {
@@ -55,6 +56,7 @@ function typeCode(value) {
     }
     return input;
 }
+// Заполняет подсказки поля типа места.
 function renderTypes() {
     const list = $('place-types');
     list.replaceChildren();
@@ -86,7 +88,9 @@ const messages = {
 const $ = id => document.getElementById(id);
 const pollingInterval = 400;
 let language = 'ru', generation = 0, current = null, lastAction = null, configured = false;
+// Возвращает перевод по ключу.
 const t = key => messages[language][key];
+// Создаёт HTML-элемент с классом и текстом.
 function element(tag, className, text) {
     const node = document.createElement(tag);
     if (className)
@@ -95,6 +99,7 @@ function element(tag, className, text) {
         node.textContent = text;
     return node;
 }
+// Обновляет подписи и подсказки при смене языка.
 function translate() {
     const field = $('place-type');
     field.placeholder = ['bus_stop', 'museum', 'park'].map(typeLabel).join(', ');
@@ -107,11 +112,13 @@ function translate() {
     });
     $('query').placeholder = t('placeholder');
 }
+// Собирает параметры запроса из полей формы.
 function options() {
     return {
         language, placeType: typeCode($('place-type').value), radius: Number($('radius').value), limit: Number($('limit').value)
     };
 }
+// Очищает область результатов предыдущего поиска.
 function clearResults() {
     $('locations').hidden = true;
     $('report').hidden = true;
@@ -119,6 +126,7 @@ function clearResults() {
     $('error-panel').hidden = true;
     $('empty-state').hidden = false;
 }
+// Удаляет задачу на сервере по её идентификатору.
 function release(id) {
     if (id)
         fetch('/api/jobs/' + encodeURIComponent(id), {
@@ -126,6 +134,7 @@ function release(id) {
         }).catch(() => {
         });
 }
+// Останавливает текущий опрос и освобождает задачу.
 function cancel(silent = false) {
     generation++;
     if (current) {
@@ -138,12 +147,15 @@ function cancel(silent = false) {
     if (!silent)
         $('status').textContent = t('canceled');
 }
+// Показывает сообщение по коду ошибки.
 function showError(code) {
     $('error-text').textContent = messages[language].errors[code] || messages[language].errors.upstream;
     $('error-panel').hidden = false;
 }
+// Выдерживает паузу между опросами с поддержкой отмены.
 function pause(signal) {
     return new Promise((resolve, reject) => {
+        // Прерывает ожидание и снимает таймер.
         const abort = () => {
             clearTimeout(timer);
             reject(new DOMException('Canceled', 'AbortError'));
@@ -160,6 +172,7 @@ function pause(signal) {
             });
     });
 }
+// Читает JSON и проверяет статус HTTP-ответа.
 async function json(response) {
     let body;
     try {
@@ -172,7 +185,7 @@ async function json(response) {
         throw new Error(body.error || 'upstream');
     return body;
 }
-// Каждая операция получает свой номер: запоздалый ответ не заменит новый результат.
+// Запускает задачу и опрашивает сервер до получения результата.
 async function execute(kind, payload) {
     cancel(true);
     const token = generation;
@@ -235,6 +248,7 @@ async function execute(kind, payload) {
         }
     }
 }
+// Показывает найденные адреса для выбора.
 function renderLocations(locations) {
     const list = $('location-list');
     list.replaceChildren();
@@ -258,6 +272,7 @@ function renderLocations(locations) {
     });
     $('location-count').textContent = String(locations.length).padStart(2, '0');
 }
+// Показывает погоду и карточки мест из готового отчёта.
 function renderReport(result) {
     const fragment = document.createDocumentFragment();
     const header = element('div', 'report-header');
@@ -268,11 +283,13 @@ function renderReport(result) {
     if (result.PlacesSource)
         fragment.append(element('p', 'report-note', t('source') + ': ' + (result.PlacesSource.includes('fallback') ? t('fallback') : result.PlacesSource)));
     const weather = element('div', 'weather');
+    // Создаёт элемент для одного погодного показателя.
     const measure = (label, value, main = false) => {
         const box = element('div');
         box.append(element('div', 'weather-label', label), element('div', main ? 'temperature' : 'weather-value', value));
         return box;
     };
+    // Форматирует число с учётом языка интерфейса.
     const number = value => Number(value).toLocaleString(language, {
         maximumFractionDigits: 1
     });
@@ -368,6 +385,7 @@ for (const id of ['radius', 'limit', 'place-type'])
         $('status').textContent = '';
     });
 window.addEventListener('pagehide', () => cancel(true));
+// Загружает начальные настройки формы с сервера.
 async function initialize() {
     $('search-button').disabled = true;
     try {

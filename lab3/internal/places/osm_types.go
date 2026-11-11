@@ -12,7 +12,7 @@ var PlaceTypes = []string{
 
 const maxPlaceTypeLength = 64
 
-// Список выше содержит подсказки. Вручную можно ввести и другой корректный OSM-код.
+// ValidPlaceType проверяет длину и допустимые символы OSM-кода.
 func ValidPlaceType(value string) bool {
 	if len(value) > maxPlaceTypeLength {
 		return false
