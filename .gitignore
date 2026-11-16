@@ -11,6 +11,7 @@ mcdisc
 *.test
 CODE_WALKTHROUGH.md
 WORKFLOW.md
+THEORY.md
 *.prof
 /vendor/
 .idea/
