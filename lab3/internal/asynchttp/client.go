@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jzx17/gofetch"
+	"github.com/jzx17/gofetch/core"
 )
 
 const (
@@ -70,7 +71,11 @@ func GetJSON[T any](ctx context.Context, client *Client, endpoint string) *futur
 			if response == nil {
 				return errors.New("HTTP client returned no response")
 			}
-			defer response.CloseBody()
+			defer func(response *core.Response) {
+				err := response.CloseBody()
+				if err != nil {
+				}
+			}(response)
 			body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 			bodyLog := redact(string(body))
 			if len(bodyLog) > maxLogBodyBytes {
