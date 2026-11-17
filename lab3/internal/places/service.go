@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"places/internal/asynchttp"
@@ -306,7 +305,6 @@ func (s *Service) nearby(ctx context.Context, location Location) *future.Future[
 			result.Resolve(Result{Places: items, PlacesSource: "OpenTripMap"}, nil)
 			return
 		}
-		log.Print("[API] OpenTripMap unavailable or empty; falling back to Wikipedia")
 		wiki("Wikipedia (OpenTripMap fallback)").OnComplete(result.Resolve)
 	})
 	return result
@@ -344,7 +342,6 @@ func keepPartialPlace(card *future.Future[Place], partial *Place) *future.Future
 	result := future.New[Place]()
 	card.OnComplete(func(value Place, err error) {
 		if err != nil {
-			log.Printf("[API] incomplete place %q: %v", partial.Title, err)
 			value = *partial
 		}
 		result.Resolve(value, nil)
