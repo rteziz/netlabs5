@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -35,6 +36,30 @@ const (
 	replyConnectionRefused  byte = 0x05
 	replyCommandUnsupported byte = 0x07
 	replyAddressUnsupported byte = 0x08
+)
+
+// Позиции и размеры полей сообщений SOCKS5, в байтах.
+const (
+	versionOffset = 0
+
+	greetingMethodCountOffset = 1
+	greetingHeaderSize        = 2
+	greetingMethodsOffset     = greetingHeaderSize
+
+	requestCommandOffset     = 1
+	requestReservedOffset    = 2
+	requestAddressTypeOffset = 3
+	requestHeaderSize        = 4
+	requestAddressOffset     = requestHeaderSize
+
+	ipv4AddressSize = 4
+	portSize        = 2
+	ipv4RequestSize = requestHeaderSize + ipv4AddressSize + portSize
+
+	domainLengthOffset    = requestAddressOffset
+	domainLengthSize      = 1
+	domainNameOffset      = domainLengthOffset + domainLengthSize
+	domainRequestBaseSize = domainNameOffset + portSize
 )
 
 type phase int
@@ -100,7 +125,7 @@ func (c *client) fail(code byte) {
 	c.down = append(c.down, socksVersion, code, socksReserved, addressIPv4, 0, 0, 0, 0, 0, 0)
 	c.state = closing
 }
-func (c *client) connect(ip [4]byte) {
+func (c *client) connect(ip [ipv4AddressSize]byte) {
 	fd, e := socket(unix.SOCK_STREAM)
 	if e != nil {
 		c.fail(replyGeneralFailure)
@@ -136,20 +161,20 @@ func (c *client) connected() {
 	v := a.(*unix.SockaddrInet4)
 	c.down = append(c.down, socksVersion, replySucceeded, socksReserved, addressIPv4)
 	c.down = append(c.down, v.Addr[:]...)
-	c.down = append(c.down, byte(v.Port>>8), byte(v.Port))
+	c.down = binary.BigEndian.AppendUint16(c.down, uint16(v.Port))
 	c.state = relay
 }
 func (s *server) parse(c *client) {
 	b := c.up
 	if c.state == greeting {
-		if len(b) < 2 {
+		if len(b) < greetingHeaderSize {
 			return
 		}
-		n := 2 + int(b[1])
+		n := greetingHeaderSize + int(b[greetingMethodCountOffset])
 		if len(b) < n {
 			return
 		}
-		if b[0] != socksVersion || !bytes.Contains(b[2:n], []byte{authNoAuthentication}) {
+		if b[versionOffset] != socksVersion || !bytes.Contains(b[greetingMethodsOffset:n], []byte{authNoAuthentication}) {
 			c.down = append(c.down, socksVersion, authNoAcceptableMethods)
 			c.state = closing
 			return
@@ -159,25 +184,25 @@ func (s *server) parse(c *client) {
 		b = b[n:]
 		c.up = b
 	}
-	if c.state != request || len(b) < 4 {
+	if c.state != request || len(b) < requestHeaderSize {
 		return
 	}
-	if b[0] != socksVersion || b[2] != socksReserved {
+	if b[versionOffset] != socksVersion || b[requestReservedOffset] != socksReserved {
 		c.fail(replyGeneralFailure)
 		return
 	}
-	if b[1] != commandConnect {
+	if b[requestCommandOffset] != commandConnect {
 		c.fail(replyCommandUnsupported)
 		return
 	}
-	n := 10
-	switch b[3] {
+	n := ipv4RequestSize
+	switch b[requestAddressTypeOffset] {
 	case addressIPv4:
 	case addressDomain:
-		if len(b) < 5 {
+		if len(b) < domainNameOffset {
 			return
 		}
-		n = 7 + int(b[4])
+		n = domainRequestBaseSize + int(b[domainLengthOffset])
 	default:
 		c.fail(replyAddressUnsupported)
 		return
@@ -185,12 +210,12 @@ func (s *server) parse(c *client) {
 	if len(b) < n {
 		return
 	}
-	c.port = int(b[n-2])*256 + int(b[n-1])
+	c.port = int(binary.BigEndian.Uint16(b[n-portSize : n]))
 	c.up = b[n:]
-	if b[3] == addressIPv4 {
-		c.connect([4]byte(b[4:8]))
+	if b[requestAddressTypeOffset] == addressIPv4 {
+		c.connect([ipv4AddressSize]byte(b[requestAddressOffset : requestAddressOffset+ipv4AddressSize]))
 	} else {
-		s.resolve(c, string(b[5:n-2]))
+		s.resolve(c, string(b[domainNameOffset:n-portSize]))
 	}
 }
 func (s *server) io(c *client, peer bool, events int16) {
@@ -251,11 +276,17 @@ func (s *server) io(c *client, peer bool, events int16) {
 	}
 	if c.state == relay {
 		if c.eof && len(c.up) == 0 && !c.peerShut {
-			unix.Shutdown(c.peer, unix.SHUT_WR)
+			err := unix.Shutdown(c.peer, unix.SHUT_WR)
+			if err != nil {
+				return
+			}
 			c.peerShut = true
 		}
 		if c.peerEOF && len(c.down) == 0 && !c.shut {
-			unix.Shutdown(c.fd, unix.SHUT_WR)
+			err := unix.Shutdown(c.fd, unix.SHUT_WR)
+			if err != nil {
+				return
+			}
 			c.shut = true
 		}
 		if c.shut && c.peerShut {
@@ -340,7 +371,7 @@ func serve() error {
 		if err != nil {
 			return err
 		}
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			f := strings.Fields(line)
 			if len(f) >= 2 && f[0] == "nameserver" {
 				ip, err := netip.ParseAddr(f[1])
@@ -359,8 +390,16 @@ func serve() error {
 	if e != nil {
 		return e
 	}
-	defer unix.Close(s.listener)
-	unix.SetsockoptInt(s.listener, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+	defer func(fd int) {
+		err := unix.Close(fd)
+		if err != nil {
+
+		}
+	}(s.listener)
+	err := unix.SetsockoptInt(s.listener, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+	if err != nil {
+		return err
+	}
 	if e = unix.Bind(s.listener, &unix.SockaddrInet4{Port: port}); e != nil {
 		return e
 	}
@@ -371,7 +410,12 @@ func serve() error {
 	if e != nil {
 		return e
 	}
-	defer unix.Close(s.dns)
+	defer func(fd int) {
+		err := unix.Close(fd)
+		if err != nil {
+
+		}
+	}(s.dns)
 	if e = unix.Connect(s.dns, &unix.SockaddrInet4{Addr: resolver.Addr().As4(), Port: int(resolver.Port())}); e != nil {
 		return e
 	}
@@ -380,7 +424,7 @@ func serve() error {
 func run() {
 	runtime.LockOSThread()
 	if e := serve(); e != nil {
-		fmt.Fprintln(os.Stderr, e)
+		_, _ = fmt.Fprintln(os.Stderr, e)
 		os.Exit(1)
 	}
 }
