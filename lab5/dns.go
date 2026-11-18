@@ -9,7 +9,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const dnsTimeout = 2 * time.Second
+const (
+	dnsTimeout                       = 2 * time.Second
+	defaultDNSPort                   = 53
+	maxDNSAttempts                   = 3
+	maxDNSQueries                    = 1 << 16
+	dnsOpCodeQuery dnsmessage.OpCode = 0
+)
 
 type query struct {
 	c        *client
@@ -21,13 +27,13 @@ type query struct {
 }
 
 func (s *server) resolve(c *client, host string) {
-	if host == "" || len(s.queries) == 65536 {
-		c.fail(4)
+	if host == "" || len(s.queries) == maxDNSQueries {
+		c.fail(replyHostUnreachable)
 		return
 	}
 	name, e := dnsmessage.NewName(strings.TrimSuffix(host, ".") + ".")
 	if e != nil {
-		c.fail(4)
+		c.fail(replyHostUnreachable)
 		return
 	}
 	id := uint16(rand.Uint32())
@@ -37,7 +43,7 @@ func (s *server) resolve(c *client, host string) {
 	msg := dnsmessage.Message{Header: dnsmessage.Header{ID: id, RecursionDesired: true}, Questions: []dnsmessage.Question{{Name: name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}}}
 	packet, e := msg.Pack()
 	if e != nil {
-		c.fail(4)
+		c.fail(replyHostUnreachable)
 		return
 	}
 	c.id = id
@@ -49,8 +55,8 @@ func (s *server) timers(now time.Time) (int, bool) {
 	write := false
 	for id, q := range s.queries {
 		if !now.Before(q.deadline) {
-			if q.attempts == 3 {
-				q.c.fail(4)
+			if q.attempts == maxDNSAttempts {
+				q.c.fail(replyHostUnreachable)
 				delete(s.queries, id)
 				continue
 			}
@@ -84,7 +90,7 @@ func (s *server) answer() {
 	}
 	var p dnsmessage.Parser
 	h, e := p.Start(s.scratch[:n])
-	if e != nil || !h.Response || h.OpCode != 0 {
+	if e != nil || !h.Response || h.OpCode != dnsOpCodeQuery {
 		return
 	}
 	q := s.queries[h.ID]
@@ -127,5 +133,5 @@ func (s *server) answer() {
 		delete(aliases, key)
 		key = next
 	}
-	q.c.fail(4)
+	q.c.fail(replyHostUnreachable)
 }

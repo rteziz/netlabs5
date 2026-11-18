@@ -16,6 +16,27 @@ import (
 
 const limit = 64 * 1024
 
+const (
+	socksVersion  byte = 0x05
+	socksReserved byte = 0x00
+
+	authNoAuthentication    byte = 0x00
+	authNoAcceptableMethods byte = 0xFF
+
+	commandConnect byte = 0x01
+
+	addressIPv4   byte = 0x01
+	addressDomain byte = 0x03
+
+	replySucceeded          byte = 0x00
+	replyGeneralFailure     byte = 0x01
+	replyNetworkUnreachable byte = 0x03
+	replyHostUnreachable    byte = 0x04
+	replyConnectionRefused  byte = 0x05
+	replyCommandUnsupported byte = 0x07
+	replyAddressUnsupported byte = 0x08
+)
+
 type phase int
 
 const (
@@ -47,7 +68,10 @@ func socket(kind int) (int, error) {
 		return -1, e
 	}
 	if e = unix.SetNonblock(fd, true); e != nil {
-		unix.Close(fd)
+		err := unix.Close(fd)
+		if err != nil {
+			return 0, err
+		}
 		return -1, e
 	}
 	return fd, nil
@@ -60,20 +84,26 @@ func (s *server) drop(c *client) {
 	if q := s.queries[c.id]; q != nil && q.c == c {
 		delete(s.queries, c.id)
 	}
-	unix.Close(c.fd)
+	err := unix.Close(c.fd)
+	if err != nil {
+		return
+	}
 	if c.peer >= 0 {
-		unix.Close(c.peer)
+		err := unix.Close(c.peer)
+		if err != nil {
+			return
+		}
 	}
 	delete(s.clients, c.fd)
 }
 func (c *client) fail(code byte) {
-	c.down = append(c.down, 5, code, 0, 1, 0, 0, 0, 0, 0, 0)
+	c.down = append(c.down, socksVersion, code, socksReserved, addressIPv4, 0, 0, 0, 0, 0, 0)
 	c.state = closing
 }
 func (c *client) connect(ip [4]byte) {
 	fd, e := socket(unix.SOCK_STREAM)
 	if e != nil {
-		c.fail(1)
+		c.fail(replyGeneralFailure)
 		return
 	}
 	c.peer = fd
@@ -86,25 +116,25 @@ func (c *client) connect(ip [4]byte) {
 	}
 }
 func (c *client) connectError(e error) {
-	code := byte(1)
+	code := replyGeneralFailure
 	switch e {
 	case unix.ECONNREFUSED:
-		code = 5
+		code = replyConnectionRefused
 	case unix.ENETUNREACH:
-		code = 3
+		code = replyNetworkUnreachable
 	case unix.EHOSTUNREACH:
-		code = 4
+		code = replyHostUnreachable
 	}
 	c.fail(code)
 }
 func (c *client) connected() {
 	a, e := unix.Getsockname(c.peer)
 	if e != nil {
-		c.fail(1)
+		c.fail(replyGeneralFailure)
 		return
 	}
 	v := a.(*unix.SockaddrInet4)
-	c.down = append(c.down, 5, 0, 0, 1)
+	c.down = append(c.down, socksVersion, replySucceeded, socksReserved, addressIPv4)
 	c.down = append(c.down, v.Addr[:]...)
 	c.down = append(c.down, byte(v.Port>>8), byte(v.Port))
 	c.state = relay
@@ -119,12 +149,12 @@ func (s *server) parse(c *client) {
 		if len(b) < n {
 			return
 		}
-		if b[0] != 5 || !bytes.Contains(b[2:n], []byte{0}) {
-			c.down = append(c.down, 5, 255)
+		if b[0] != socksVersion || !bytes.Contains(b[2:n], []byte{authNoAuthentication}) {
+			c.down = append(c.down, socksVersion, authNoAcceptableMethods)
 			c.state = closing
 			return
 		}
-		c.down = append(c.down, 5, 0)
+		c.down = append(c.down, socksVersion, authNoAuthentication)
 		c.state = request
 		b = b[n:]
 		c.up = b
@@ -132,24 +162,24 @@ func (s *server) parse(c *client) {
 	if c.state != request || len(b) < 4 {
 		return
 	}
-	if b[0] != 5 || b[2] != 0 {
-		c.fail(1)
+	if b[0] != socksVersion || b[2] != socksReserved {
+		c.fail(replyGeneralFailure)
 		return
 	}
-	if b[1] != 1 {
-		c.fail(7)
+	if b[1] != commandConnect {
+		c.fail(replyCommandUnsupported)
 		return
 	}
 	n := 10
 	switch b[3] {
-	case 1:
-	case 3:
+	case addressIPv4:
+	case addressDomain:
 		if len(b) < 5 {
 			return
 		}
 		n = 7 + int(b[4])
 	default:
-		c.fail(8)
+		c.fail(replyAddressUnsupported)
 		return
 	}
 	if len(b) < n {
@@ -157,7 +187,7 @@ func (s *server) parse(c *client) {
 	}
 	c.port = int(b[n-2])*256 + int(b[n-1])
 	c.up = b[n:]
-	if b[3] == 1 {
+	if b[3] == addressIPv4 {
 		c.connect([4]byte(b[4:8]))
 	} else {
 		s.resolve(c, string(b[5:n-2]))
@@ -174,7 +204,7 @@ func (s *server) io(c *client, peer bool, events int16) {
 		if c.state == connecting {
 			errno, e := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_ERROR)
 			if e != nil {
-				c.fail(1)
+				c.fail(replyGeneralFailure)
 			} else if errno != 0 {
 				c.connectError(unix.Errno(errno))
 			} else {
@@ -315,7 +345,7 @@ func serve() error {
 			if len(f) >= 2 && f[0] == "nameserver" {
 				ip, err := netip.ParseAddr(f[1])
 				if err == nil && ip.Is4() {
-					resolver = netip.AddrPortFrom(ip, 53)
+					resolver = netip.AddrPortFrom(ip, defaultDNSPort)
 					break
 				}
 			}
